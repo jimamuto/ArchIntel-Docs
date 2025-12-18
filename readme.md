@@ -1,4 +1,3 @@
-**ArchIntel Docs** project.
 
 ***
 
