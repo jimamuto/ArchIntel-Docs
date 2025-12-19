@@ -51,7 +51,7 @@ This section defines the core components: frontend (Next.js), backend (FastAPI),
   - Supabase Auth for multi-user support.[web:40]
 
 - **LLM + Integrations**  
-  - LLM provider (e.g., Groq/OpenAI) for generation.  
+  - LLM provider (Groq) for generation.  
   - Git (via `git` CLI or library) for history.[web:28][web:38]
 
 **Recommended videos**
@@ -73,7 +73,7 @@ This section defines the core components: frontend (Next.js), backend (FastAPI),
 
 - Parse repo source files.  
 - Build an internal structural map (AST → modules, classes, functions).  
-- Generate basic docs per file and module using templates + LLM.  
+- Generate basic docs per file and module using templates + Groq LLM.  
 - Display docs in a Next.js UI (sidebar nav + main content).[web:31][web:41]
 
 ### 3.2 Backend Tasks (You – FastAPI)
@@ -89,7 +89,7 @@ This section defines the core components: frontend (Next.js), backend (FastAPI),
   - Store structure in Supabase tables (files, symbols, relationships).[web:40]
 - Implement doc generator utility:
   - Build prompts from AST info (name, docstring, imports, relations).  
-  - Call LLM to generate summaries and persist them.
+  - Call Groq LLM to generate summaries and persist them.
 
 ### 3.3 Frontend Tasks (Next.js / React)
 
