@@ -1,5 +1,11 @@
+import sys
+import os
+
+# Load environment variables BEFORE importing modules that need them
 from dotenv import load_dotenv
 load_dotenv()
+
+sys.path.append(os.path.dirname(__file__))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

@@ -1,22 +1,90 @@
 from fastapi import APIRouter, HTTPException, Request, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, FileResponse
+import tempfile
+import shutil
+import subprocess
 from supabase import create_client, Client
 import os
 import pathlib
 import ast
+import gzip
+import hashlib
+import base64
+from datetime import datetime
 
 router = APIRouter()
 
+# --- Stateless endpoint: Extract documentation from GitHub repo and return as download ---
+@router.post("/stateless/extract-docs")
+async def stateless_extract_docs(request: Request):
+    """
+    Accepts a JSON body with a 'repo_url'.
+    Clones the repo to a temp dir, extracts documentation files, zips them, and returns the zip for download.
+    No data is stored in the database.
+    """
+    data = await request.json()
+    repo_url = data.get("repo_url")
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="Missing 'repo_url' in request body")
+
+    temp_dir = tempfile.mkdtemp()
+    zip_path = None
+    try:
+        # Clone the repo to temp_dir/repo
+        repo_dir = os.path.join(temp_dir, "repo")
+        result = subprocess.run(["git", "clone", "--depth", "1", repo_url, repo_dir], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HTTPException(status_code=400, detail=f"Git clone failed: {result.stderr}")
+
+        # Collect documentation files (README, .md, .rst, .txt, /docs/)
+        doc_files = []
+        for root, dirs, files in os.walk(repo_dir):
+            for file in files:
+                if file.lower().startswith("readme") or file.lower().endswith((".md", ".rst", ".txt")):
+                    doc_files.append(os.path.join(root, file))
+            # Also include everything in a 'docs' folder
+            if "docs" in dirs:
+                docs_dir = os.path.join(root, "docs")
+                for docs_root, _, docs_files in os.walk(docs_dir):
+                    for docs_file in docs_files:
+                        doc_files.append(os.path.join(docs_root, docs_file))
+
+        if not doc_files:
+            raise HTTPException(status_code=404, detail="No documentation files found in the repository.")
+
+        # Create a zip file with the documentation
+        zip_path = os.path.join(temp_dir, "documentation.zip")
+        import zipfile
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for file_path in doc_files:
+                arcname = os.path.relpath(file_path, repo_dir)
+                zipf.write(file_path, arcname)
+
+        # Return the zip file as a download
+        return FileResponse(zip_path, filename="documentation.zip", media_type="application/zip")
+    finally:
+        # Clean up temp files after response is sent
+        if zip_path and os.path.exists(zip_path):
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+        if os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
 # --- New endpoint: Extract code from a file for a project ---
 @router.get("/{project_id}/file/code", response_class=PlainTextResponse)
-def get_file_code(project_id: str, path: str = Query(..., description="Relative path of the file in the project"), repo_path: str = Query(None, description="Local path to the repo (optional, for local projects)")):
+def get_file_code(project_id: str, path: str = Query(..., description="Relative path of the file in the project"), repo_path: str = Query(..., description="Local path to the repo")):
     """
     Returns the code content of a file for a given project and relative file path.
-    If repo_path is not provided or repository is not available, returns a placeholder message.
+    Reads from filesystem only (stateless - no database storage).
     """
     try:
         if not repo_path:
-            return "// Repository path not provided. Please ensure the project repository is cloned locally."
+            return "// Repository path not provided."
 
         # Handle different repo_path formats
         if repo_path == ".":
@@ -39,17 +107,17 @@ def get_file_code(project_id: str, path: str = Query(..., description="Relative 
             return "// Invalid file path - access denied for security reasons."
 
         if not os.path.exists(abs_path):
-            return f"// File not found: {path}\n// The repository may not be cloned locally or the file path may be incorrect.\n// Repository path: {repo_path}\n// Full path: {repo_path_full}"
+            return f"// File not found: {path}"
 
         # Check if repo_path exists
         if not os.path.exists(repo_path_full):
-            return f"// Repository not found locally: {repo_path}\n// Full path: {repo_path_full}\n// Please clone the repository first to view source code."
+            return f"// Repository not found locally: {repo_path}"
 
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
         return code
     except Exception as e:
-        return f"// Error reading file: {str(e)}\n// File path: {path}\n// Repository path: {repo_path or 'Not provided'}"
+        return f"// Error reading file: {str(e)}\n// File path: {path}"
 
 # Mapping of file extensions to programming languages
 LANGUAGE_EXTENSIONS = {
@@ -226,10 +294,11 @@ def get_structure(project_id: str):
 
 @router.post("/{project_id}/clone")
 def clone_and_ingest_code(project_id: str):
+    """
+    Clone repository and ingest file metadata only (stateless - no content storage).
+    Creates temporary clone to scan file structure without storing sensitive code.
+    """
     try:
-        import subprocess
-        import shutil
-
         # Get project details
         project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
         try:
@@ -244,64 +313,68 @@ def clone_and_ingest_code(project_id: str):
             raise HTTPException(status_code=404, detail="Project not found")
 
         repo_url = project["repo_url"]
-        repo_name = repo_url.split('/')[-1].replace('.git', '')
 
-        # Create permanent repos directory
-        repos_dir = os.path.join(os.getcwd(), "repos")
-        os.makedirs(repos_dir, exist_ok=True)
+        # Check if we already have files for this project
+        existing_files = supabase.table("files").select("id", count="exact").eq("project_id", project_id).execute()
+        if hasattr(existing_files, 'count') and existing_files.count > 0:
+            return {"message": f"Project {project['name']} already has {existing_files.count} files stored in database", "files_count": existing_files.count}
 
-        repo_path = os.path.join(repos_dir, repo_name)
+        # Extract GitHub repo info from URL
+        import re
+        github_match = re.match(r'https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
+        if not github_match:
+            raise HTTPException(status_code=400, detail="Invalid GitHub repository URL")
 
-        # Check if repo already exists
-        if os.path.exists(repo_path):
-            # If it exists, just update it
-            try:
-                subprocess.run(['git', 'pull'], cwd=repo_path, check=True, capture_output=True, text=True)
-            except subprocess.CalledProcessError:
-                # If pull fails, remove and reclone
-                shutil.rmtree(repo_path)
-                subprocess.run(['git', 'clone', repo_url, repo_path], check=True, capture_output=True, text=True)
-        else:
+        owner, repo = github_match.groups()
+
+        # Clone to temp directory to scan file structure
+        temp_dir = tempfile.mkdtemp()
+        repo_dir = os.path.join(temp_dir, "repo")
+
+        try:
             # Clone the repository
-            subprocess.run(['git', 'clone', repo_url, repo_path], check=True, capture_output=True, text=True)
+            result = subprocess.run(["git", "clone", "--depth", "1", repo_url, repo_dir], capture_output=True, text=True)
+            if result.returncode != 0:
+                raise HTTPException(status_code=400, detail=f"Git clone failed: {result.stderr}")
 
-        # Now ingest the code using the existing endpoint logic
-        files = []
-        for dirpath, _, filenames in os.walk(repo_path):
-            if any(excluded in dirpath for excluded in ["venv", "node_modules", ".git"]):
-                continue
-            for filename in filenames:
-                # Check for exact filename matches (like Makefile, Dockerfile)
-                if filename in LANGUAGE_EXTENSIONS:
-                    language = LANGUAGE_EXTENSIONS[filename]
-                    file_path = os.path.join(dirpath, filename)
-                    rel_path = os.path.relpath(file_path, repo_path)
-                    files.append({
+            # Scan files and collect metadata only
+            files_to_insert = []
+            for dirpath, _, filenames in os.walk(repo_dir):
+                if any(excluded in dirpath for excluded in ["venv", "node_modules", ".git"]):
+                    continue
+                for filename in filenames:
+                    rel_path = os.path.relpath(os.path.join(dirpath, filename), repo_dir)
+
+                    # Determine language from extension
+                    language = "unknown"
+                    if filename in LANGUAGE_EXTENSIONS:
+                        language = LANGUAGE_EXTENSIONS[filename]
+                    else:
+                        _, ext = os.path.splitext(filename)
+                        if ext in LANGUAGE_EXTENSIONS:
+                            language = LANGUAGE_EXTENSIONS[ext]
+
+                    files_to_insert.append({
                         "project_id": project_id,
                         "path": rel_path,
                         "language": language
                     })
-                else:
-                    # Check for file extension matches
-                    _, ext = os.path.splitext(filename)
-                    if ext in LANGUAGE_EXTENSIONS:
-                        language = LANGUAGE_EXTENSIONS[ext]
-                        file_path = os.path.join(dirpath, filename)
-                        rel_path = os.path.relpath(file_path, repo_path)
-                        files.append({
-                            "project_id": project_id,
-                            "path": rel_path,
-                            "language": language
-                        })
 
-        if files:
-            supabase.table("files").insert(files).execute()
-            return {"message": f"Successfully cloned and ingested {len(files)} files from {repo_url}", "repo_path": repo_path}
-        else:
-            return {"message": f"Repository cloned but no supported code files found in {repo_url}", "repo_path": repo_path}
+            if files_to_insert:
+                supabase.table("files").insert(files_to_insert).execute()
+                return {
+                    "message": f"Successfully scanned {len(files_to_insert)} files for {project['name']} (metadata only)",
+                    "files_count": len(files_to_insert),
+                    "note": "File content not stored in database for security. Access via local repository."
+                }
+            else:
+                return {"message": f"No files found in {project['name']}"}
 
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to clone repository: {e.stderr}")
+        finally:
+            # Clean up temp directory
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

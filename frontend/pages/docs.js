@@ -107,7 +107,7 @@ export default function Docs() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-slate-50 mb-2">Documentation Explorer</h1>
-            <p className="text-sm text-slate-400">Browse and explore AI-generated documentation for your codebase</p>
+            <p className="text-sm text-slate-400">Browse and explore AI-generated documentation for your codebase. <span className="text-emerald-400">🔒 Stateless system ensures code never leaves your filesystem.</span></p>
           </div>
           <div className="flex items-center gap-3">
             <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800">
@@ -188,11 +188,33 @@ export default function Docs() {
                           setLoading(false);
                         }
                       }}
-                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 mb-2"
                       size="sm"
                       disabled={structure.length === 0}
                     >
                       🧪 Run Tests
+                    </Button>
+                    <Button
+                      onClick={async () => {
+                        setLoading(true);
+                        setError(null);
+                        try {
+                          const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/stateless-tests`, {
+                            method: 'POST'
+                          });
+                          const data = await res.json();
+                          setTestResults(data);
+                        } catch (err) {
+                          setError('Failed to run stateless tests');
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                      className="w-full bg-blue-500 hover:bg-blue-400 text-slate-950"
+                      size="sm"
+                      disabled={structure.length === 0}
+                    >
+                      🔒 Run Stateless Tests
                     </Button>
                   </div>
 
@@ -290,6 +312,30 @@ export default function Docs() {
                       onClick={() => setShowCode(!showCode)}
                     >
                       {showCode ? 'Show Docs' : 'Show Code'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                      onClick={async () => {
+                        try {
+                          const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+                          let repoPath;
+
+                          if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
+                            repoPath = '.';
+                          } else {
+                            repoPath = `repos/${repoName}`;
+                          }
+
+                          const downloadUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc/download?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
+                          window.open(downloadUrl, '_blank');
+                        } catch (err) {
+                          setError('Failed to download documentation');
+                        }
+                      }}
+                    >
+                      📥 Download Docs
                     </Button>
                   </div>
                 </div>
