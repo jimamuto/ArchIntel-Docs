@@ -82,6 +82,7 @@ def get_file_code(project_id: str, path: str = Query(..., description="Relative 
     Returns the code content of a file for a given project and relative file path.
     Reads from filesystem only (stateless - no database storage).
     """
+    temp_dir = None
     try:
         if not repo_path:
             return "// Repository path not provided."
@@ -106,18 +107,34 @@ def get_file_code(project_id: str, path: str = Query(..., description="Relative 
         if not abs_path.startswith(os.path.abspath(repo_path_full)):
             return "// Invalid file path - access denied for security reasons."
 
+        # Check if repo_path exists locally
+        if not os.path.exists(repo_path_full):
+            # Repository not found locally, clone it temporarily
+            # Get project details to get repo URL
+            project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+            project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+
+            # Clone repository temporarily
+            temp_dir = tempfile.mkdtemp()
+            result = subprocess.run(["git", "clone", "--depth", "1", project["repo_url"], repo_path_full], capture_output=True, text=True)
+            if result.returncode != 0:
+                return f"// Failed to clone repository: {result.stderr}"
+
         if not os.path.exists(abs_path):
             return f"// File not found: {path}"
-
-        # Check if repo_path exists
-        if not os.path.exists(repo_path_full):
-            return f"// Repository not found locally: {repo_path}"
 
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
         return code
     except Exception as e:
         return f"// Error reading file: {str(e)}\n// File path: {path}"
+    finally:
+        # Clean up temporary clone if it was created
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 # Mapping of file extensions to programming languages
 LANGUAGE_EXTENSIONS = {

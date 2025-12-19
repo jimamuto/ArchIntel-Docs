@@ -4,7 +4,7 @@ import httpx
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-async def generate_doc_with_groq(prompt: str) -> str:
+def generate_doc_with_groq(prompt: str) -> str:
     # Simulate real LLM responses for demonstration
     # In production, this would call the actual Groq API
     try:

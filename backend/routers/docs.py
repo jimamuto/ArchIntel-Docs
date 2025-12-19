@@ -55,6 +55,7 @@ async def get_file_llm_documentation(
     Generate documentation for a code file using Groq LLM.
     Reads file content from filesystem only (stateless - no database storage).
     """
+    temp_dir = None
     try:
         if not repo_path:
             return "Error: Repository path not provided"
@@ -79,21 +80,37 @@ async def get_file_llm_documentation(
         if not abs_path.startswith(os.path.abspath(repo_path_full)):
             return "Error: Invalid file path - access denied for security reasons."
 
+        # Check if repo_path exists locally
+        if not os.path.exists(repo_path_full):
+            # Repository not found locally, clone it temporarily
+            # Get project details to get repo URL
+            project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+            project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+
+            # Clone repository temporarily
+            temp_dir = tempfile.mkdtemp()
+            result = subprocess.run(["git", "clone", "--depth", "1", project["repo_url"], repo_path_full], capture_output=True, text=True)
+            if result.returncode != 0:
+                return f"Error: Failed to clone repository - {result.stderr}"
+
         if not os.path.exists(abs_path):
             return f"Error: File not found - {path}"
-
-        # Check if repo_path exists
-        if not os.path.exists(repo_path_full):
-            return f"Error: Repository not found locally - {repo_path}"
 
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
 
         prompt = f"""Generate clear, concise, and professional documentation for the following code file. Include a summary, usage, and any important details. Use markdown formatting.\n\n---\n\n{code}\n\n---\n"""
-        doc = await generate_doc_with_groq(prompt)
+        doc = generate_doc_with_groq(prompt)
         return doc
     except Exception as e:
         return f"Error generating documentation: {str(e)}"
+    finally:
+        # Clean up temporary clone if it was created
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
 
 @router.get("/{project_id}/file/doc/download")
 async def download_file_llm_documentation(
@@ -140,7 +157,7 @@ async def download_file_llm_documentation(
             code = f.read()
 
         prompt = f"""Generate clear, concise, and professional documentation for the following code file. Include a summary, usage, and any important details. Use markdown formatting.\n\n---\n\n{code}\n\n---\n"""
-        doc = await generate_doc_with_groq(prompt)
+        doc = generate_doc_with_groq(prompt)
 
         # Create a temporary file for download
         import tempfile
@@ -170,7 +187,7 @@ def run_project_tests(project_id: str):
     try:
         # Get project information
         project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
-        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else None
 
         # Get all files for the project
         files_response = supabase.table("files").select("id, path, language").eq("project_id", project_id).execute()
@@ -209,6 +226,291 @@ def run_stateless_tests(project_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/system/doc", response_class=PlainTextResponse)
+async def get_system_documentation(
+    project_id: str,
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    """
+    Generate comprehensive documentation for the entire project/system.
+    Analyzes all code files and creates a complete system overview.
+    """
+    temp_dir = None
+    try:
+        if not repo_path:
+            return "Error: Repository path not provided"
+
+        # Get project information
+        project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+
+        # Handle different repo_path formats
+        if repo_path == ".":
+            # Current directory (project root)
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            repo_path_full = os.path.dirname(backend_dir)  # project root
+        elif repo_path.startswith("repos/"):
+            # Backend is in backend/routers/ directory, so go up three levels to project root
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            project_root = os.path.dirname(backend_dir)  # project root
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
+
+        # Check if repo_path exists locally
+        if not os.path.exists(repo_path_full):
+            # Repository not found locally, clone it temporarily
+            # Clone repository temporarily
+            temp_dir = tempfile.mkdtemp()
+            result = subprocess.run(["git", "clone", "--depth", "1", project["repo_url"], repo_path_full], capture_output=True, text=True)
+            if result.returncode != 0:
+                return f"Error: Failed to clone repository - {result.stderr}"
+
+        # Collect all code files in the project
+        code_files = []
+        file_contents = {}
+        language_stats = {}
+
+        for root, dirs, files in os.walk(repo_path_full):
+            # Skip common non-code directories
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'venv', '__pycache__', '__pycache__', '.next', 'dist', 'build']]
+
+            for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, repo_path_full)
+
+                # Check file extensions for supported languages
+                if file.endswith(('.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c', '.php', '.rb', '.go', '.rs', '.swift', '.kt')):
+                    try:
+                        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                            content = f.read()
+
+                        # Determine language
+                        if file.endswith('.py'):
+                            lang = 'Python'
+                        elif file.endswith(('.js', '.jsx')):
+                            lang = 'JavaScript'
+                        elif file.endswith(('.ts', '.tsx')):
+                            lang = 'TypeScript'
+                        elif file.endswith('.java'):
+                            lang = 'Java'
+                        elif file.endswith(('.cpp', '.c')):
+                            lang = 'C/C++'
+                        elif file.endswith('.php'):
+                            lang = 'PHP'
+                        elif file.endswith('.rb'):
+                            lang = 'Ruby'
+                        elif file.endswith('.go'):
+                            lang = 'Go'
+                        elif file.endswith('.rs'):
+                            lang = 'Rust'
+                        elif file.endswith('.swift'):
+                            lang = 'Swift'
+                        elif file.endswith('.kt'):
+                            lang = 'Kotlin'
+                        else:
+                            lang = 'Unknown'
+
+                        code_files.append({
+                            'path': rel_path,
+                            'language': lang,
+                            'size': len(content),
+                            'lines': len(content.split('\n'))
+                        })
+
+                        file_contents[rel_path] = content[:2000]  # Limit content for analysis
+                        language_stats[lang] = language_stats.get(lang, 0) + 1
+
+                    except Exception as e:
+                        continue  # Skip files that can't be read
+
+        if not code_files:
+            return "Error: No code files found in the repository"
+
+        # Generate comprehensive system documentation
+        system_prompt = f"""
+Generate comprehensive documentation for the entire {project['name']} project. Analyze the codebase structure and create detailed documentation that covers:
+
+1. **System Overview**: What this project does, its main purpose and architecture
+2. **Technology Stack**: Languages, frameworks, and tools used
+3. **Project Structure**: Directory organization and module breakdown
+4. **Key Components**: Main files, classes, functions, and their purposes
+5. **Architecture**: How different parts of the system interact
+6. **Dependencies**: External libraries and services used
+7. **Usage**: How to run, configure, and use the system
+
+Codebase Statistics:
+- Total files: {len(code_files)}
+- Languages: {', '.join([f'{lang}: {count}' for lang, count in language_stats.items()])}
+- Main directories: {', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}
+
+Key Files Summary:
+{chr(10).join([f"- {f['path']} ({f['language']}, {f['lines']} lines)" for f in code_files[:10]])}
+
+Sample code from key files:
+{chr(10).join([f"--- {path} ---{chr(10)}{content[:500]}..." for path, content in list(file_contents.items())[:3]])}
+
+Provide detailed, professional documentation in markdown format.
+"""
+
+        system_doc = generate_doc_with_groq(system_prompt)
+        return system_doc
+
+    except Exception as e:
+        return f"Error generating system documentation: {str(e)}"
+    finally:
+        # Clean up temporary clone if it was created
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+@router.get("/{project_id}/system/doc/download")
+async def download_system_documentation(
+    project_id: str,
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    """
+    Generate comprehensive system documentation and return as downloadable file.
+    """
+    try:
+        if not repo_path:
+            raise HTTPException(status_code=400, detail="Repository path not provided")
+
+        # Get project information
+        project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+
+        # Handle different repo_path formats
+        if repo_path == ".":
+            # Current directory (project root)
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            repo_path_full = os.path.dirname(backend_dir)  # project root
+        elif repo_path.startswith("repos/"):
+            # Backend is in backend/routers/ directory, so go up three levels to project root
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            project_root = os.path.dirname(backend_dir)  # project root
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
+
+        if not os.path.exists(repo_path_full):
+            raise HTTPException(status_code=404, detail=f"Repository not found locally - {repo_path}")
+
+        # Collect all code files in the project (similar logic as above)
+        code_files = []
+        file_contents = {}
+        language_stats = {}
+
+        for root, dirs, files in os.walk(repo_path_full):
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'venv', '__pycache__', '__pycache__', '.next', 'dist', 'build']]
+
+            for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, repo_path_full)
+
+                if file.endswith(('.py', '.js', '.jsx', '.ts', '.tsx', '.java', '.cpp', '.c', '.php', '.rb', '.go', '.rs', '.swift', '.kt')):
+                    try:
+                        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                            content = f.read()
+
+                        # Determine language
+                        if file.endswith('.py'):
+                            lang = 'Python'
+                        elif file.endswith(('.js', '.jsx')):
+                            lang = 'JavaScript'
+                        elif file.endswith(('.ts', '.tsx')):
+                            lang = 'TypeScript'
+                        elif file.endswith('.java'):
+                            lang = 'Java'
+                        elif file.endswith(('.cpp', '.c')):
+                            lang = 'C/C++'
+                        elif file.endswith('.php'):
+                            lang = 'PHP'
+                        elif file.endswith('.rb'):
+                            lang = 'Ruby'
+                        elif file.endswith('.go'):
+                            lang = 'Go'
+                        elif file.endswith('.rs'):
+                            lang = 'Rust'
+                        elif file.endswith('.swift'):
+                            lang = 'Swift'
+                        elif file.endswith('.kt'):
+                            lang = 'Kotlin'
+                        else:
+                            lang = 'Unknown'
+
+                        code_files.append({
+                            'path': rel_path,
+                            'language': lang,
+                            'size': len(content),
+                            'lines': len(content.split('\n'))
+                        })
+
+                        file_contents[rel_path] = content[:2000]
+                        language_stats[lang] = language_stats.get(lang, 0) + 1
+
+                    except Exception as e:
+                        continue
+
+        if not code_files:
+            raise HTTPException(status_code=404, detail="No code files found in the repository")
+
+        # Generate comprehensive system documentation
+        system_prompt = f"""
+Generate comprehensive documentation for the entire {project['name']} project. Analyze the codebase structure and create detailed documentation that covers:
+
+1. **System Overview**: What this project does, its main purpose and architecture
+2. **Technology Stack**: Languages, frameworks, and tools used
+3. **Project Structure**: Directory organization and module breakdown
+4. **Key Components**: Main files, classes, functions, and their purposes
+5. **Architecture**: How different parts of the system interact
+6. **Dependencies**: External libraries and services used
+7. **Usage**: How to run, configure, and use the system
+
+Codebase Statistics:
+- Total files: {len(code_files)}
+- Languages: {', '.join([f'{lang}: {count}' for lang, count in language_stats.items()])}
+- Main directories: {', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}
+
+Key Files Summary:
+{chr(10).join([f"- {f['path']} ({f['language']}, {f['lines']} lines)" for f in code_files[:10]])}
+
+Sample code from key files:
+{chr(10).join([f"--- {path} ---{chr(10)}{content[:500]}..." for path, content in list(file_contents.items())[:3]])}
+
+Provide detailed, professional documentation in markdown format.
+"""
+
+        system_doc = generate_doc_with_groq(system_prompt)
+
+        # Create a temporary file for download
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as temp_file:
+            temp_file.write(system_doc)
+            temp_file_path = temp_file.name
+
+        # Generate filename
+        safe_project_name = project['name'].replace('/', '_').replace('\\', '_').replace(' ', '_')
+        download_filename = f"{safe_project_name}_system_documentation.md"
+
+        return FileResponse(
+            path=temp_file_path,
+            filename=download_filename,
+            media_type='text/markdown',
+            headers={"Content-Disposition": f"attachment; filename={download_filename}"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating system documentation: {str(e)}")
 
 def run_comprehensive_tests(project: dict, files: list) -> dict:
     """Run comprehensive tests on project files and return detailed results"""

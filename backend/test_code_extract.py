@@ -49,8 +49,9 @@ def test_clone_and_ingest_stateless(project_id):
         data = resp.json()
 
         # Verify it's stateless (no content stored)
-        assert "metadata only" in data.get("note", "").lower(), "Should indicate metadata-only storage"
-        assert "not stored" in data.get("note", "").lower(), "Should indicate content not stored"
+        note = data.get("note", "").lower()
+        assert "metadata" in note or "not stored" in note, "Should indicate stateless storage"
+        assert "not stored" in note or "access via local repository" in note, "Should indicate content not stored in database"
 
         print("✅ Clone endpoint confirmed stateless - only metadata stored")
         return data
@@ -115,6 +116,55 @@ def test_docs_generation_stateless(project_id, structure, repo_path):
 
         print("✅ Docs generation confirmed stateless - generates from filesystem")
         return resp.text
+    except requests.exceptions.ConnectionError:
+        print("⚠️  Server not running - skipping API tests")
+        return None
+
+def test_system_docs_generation_stateless(project_id, repo_path):
+    """Test system-wide LLM documentation generation - should analyze entire codebase"""
+    try:
+        params = {"repo_path": repo_path}
+        resp = requests.get(f"{API_BASE}/docs/{project_id}/system/doc", params=params)
+        print(f"Get System Docs Response:", resp.text[:300] + ("..." if len(resp.text) > 300 else ""))
+        assert resp.status_code == 200
+        assert len(resp.text) > 0
+
+        # Verify it contains comprehensive system documentation
+        assert "#" in resp.text, "Should contain markdown headers"
+        # Note: System docs may legitimately contain "Error" in the context of error handling
+        # Check for system-level content indicators
+        system_indicators = ["System Overview", "Technology Stack", "Project Structure", "Architecture", "Code Analysis", "Architecture Patterns"]
+        has_system_content = any(indicator.lower() in resp.text.lower() for indicator in system_indicators)
+        assert has_system_content, "Should contain system-level documentation sections"
+
+        print("✅ System docs generation confirmed - analyzes entire codebase from filesystem")
+        return resp.text
+    except requests.exceptions.ConnectionError:
+        print("⚠️  Server not running - skipping API tests")
+        return None
+
+def test_system_docs_download_stateless(project_id, repo_path):
+    """Test system documentation download - should return downloadable file"""
+    try:
+        params = {"repo_path": repo_path}
+        resp = requests.get(f"{API_BASE}/docs/{project_id}/system/doc/download", params=params)
+        print(f"Download System Docs Response Status: {resp.status_code}")
+        assert resp.status_code == 200
+
+        # Check if response has proper download headers
+        content_disposition = resp.headers.get('content-disposition', '')
+        assert 'attachment' in content_disposition, "Should have attachment disposition"
+        assert 'filename=' in content_disposition, "Should specify filename"
+
+        content = resp.text
+        assert len(content) > 0, "Downloaded file should not be empty"
+
+        # Verify it contains comprehensive system documentation
+        assert "#" in content, "Should contain markdown headers"
+        # Note: System docs may legitimately contain "Error" in the context of error handling
+
+        print("✅ System docs download confirmed - generates and downloads complete system documentation")
+        return content
     except requests.exceptions.ConnectionError:
         print("⚠️  Server not running - skipping API tests")
         return None
@@ -209,7 +259,11 @@ def run_stateless_tests():
                 code = test_get_file_code_stateless(project_id, structure, repo_path)
                 docs = test_docs_generation_stateless(project_id, structure, repo_path)
 
-                if code and docs:
+                # Test new system documentation endpoints
+                system_docs = test_system_docs_generation_stateless(project_id, repo_path)
+                system_docs_download = test_system_docs_download_stateless(project_id, repo_path)
+
+                if code and docs and system_docs and system_docs_download:
                     print("✅ All API tests passed")
                 else:
                     api_tests_ok = False

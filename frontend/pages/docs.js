@@ -12,6 +12,7 @@ export default function Docs() {
   const [docs, setDocs] = useState(null);
   const [code, setCode] = useState(null);
   const [showCode, setShowCode] = useState(false);
+  const [isSystemDoc, setIsSystemDoc] = useState(false);
   const [testResults, setTestResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -245,7 +246,11 @@ export default function Docs() {
                                   ? 'bg-emerald-500/10 text-emerald-300 border-l-2 border-emerald-500'
                                   : 'text-slate-300 hover:bg-slate-800 hover:text-slate-50'
                               }`}
-                              onClick={() => setSelectedFile(f.path)}
+                              onClick={() => {
+                                setSelectedFile(f.path);
+                                setIsSystemDoc(false); // Reset system doc mode when selecting a file
+                                setShowCode(false);
+                              }}
                             >
                               <span className="truncate">{f.path}</span>
                             </Button>
@@ -299,46 +304,129 @@ export default function Docs() {
             ) : docs || code ? (
               <Card className="group relative bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6">
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent"></div>
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-50 mb-1">{showCode ? 'Source Code' : 'Documentation'}</h2>
-                    <p className="text-xs text-slate-500">{selectedFile}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className={`border-slate-700 text-slate-300 hover:bg-slate-800 ${showCode ? 'bg-emerald-900/30' : ''}`}
-                      onClick={() => setShowCode(!showCode)}
-                    >
-                      {showCode ? 'Show Docs' : 'Show Code'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                      onClick={async () => {
-                        try {
-                          const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
-                          let repoPath;
+                  <div className="flex items-center justify-between mb-6">
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-50 mb-1">
+                        {isSystemDoc ? '🌐 System Documentation' : showCode ? 'Source Code' : 'Documentation'}
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        {isSystemDoc ? `${selectedProjectData?.name} - Complete System Overview` : selectedFile}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!isSystemDoc && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={`border-slate-700 text-slate-300 hover:bg-slate-800 ${showCode ? 'bg-emerald-900/30' : ''}`}
+                          onClick={() => setShowCode(!showCode)}
+                        >
+                          {showCode ? 'Show Docs' : 'Show Code'}
+                        </Button>
+                      )}
+                      {isSystemDoc && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                          onClick={() => {
+                            setIsSystemDoc(false);
+                            setSelectedFile(null);
+                            setDocs(null);
+                            setCode(null);
+                          }}
+                        >
+                          ← Back to Files
+                        </Button>
+                      )}
+                      {!isSystemDoc && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                          onClick={async () => {
+                            try {
+                              const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+                              let repoPath;
 
-                          if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
-                            repoPath = '.';
-                          } else {
-                            repoPath = `repos/${repoName}`;
+                              if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
+                                repoPath = '.';
+                              } else {
+                                repoPath = `repos/${repoName}`;
+                              }
+
+                              const downloadUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc/download?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
+                              window.open(downloadUrl, '_blank');
+                            } catch (err) {
+                              setError('Failed to download documentation');
+                            }
+                          }}
+                        >
+                          📥 Download File Docs
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-purple-700 text-purple-300 hover:bg-purple-800"
+                        onClick={async () => {
+                          try {
+                            const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+                            let repoPath;
+
+                            if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
+                              repoPath = '.';
+                            } else {
+                              repoPath = `repos/${repoName}`;
+                            }
+
+                            const systemDocUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/system/doc?repo_path=${encodeURIComponent(repoPath)}`;
+                            setLoading(true);
+                            const response = await fetch(systemDocUrl);
+                            if (response.ok) {
+                              const systemDoc = await response.text();
+                              setDocs(systemDoc);
+                              setSelectedFile('SYSTEM DOCUMENTATION');
+                              setIsSystemDoc(true);
+                              setShowCode(false); // System docs don't have code to show
+                            } else {
+                              setError('Failed to generate system documentation');
+                            }
+                          } catch (err) {
+                            setError('Failed to generate system documentation');
+                          } finally {
+                            setLoading(false);
                           }
+                        }}
+                      >
+                        🌐 Generate System Docs
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-purple-700 text-purple-300 hover:bg-purple-800"
+                        onClick={async () => {
+                          try {
+                            const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+                            let repoPath;
 
-                          const downloadUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc/download?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
-                          window.open(downloadUrl, '_blank');
-                        } catch (err) {
-                          setError('Failed to download documentation');
-                        }
-                      }}
-                    >
-                      📥 Download Docs
-                    </Button>
+                            if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
+                              repoPath = '.';
+                            } else {
+                              repoPath = `repos/${repoName}`;
+                            }
+
+                            const downloadUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/system/doc/download?repo_path=${encodeURIComponent(repoPath)}`;
+                            window.open(downloadUrl, '_blank');
+                          } catch (err) {
+                            setError('Failed to download system documentation');
+                          }
+                        }}
+                      >
+                        📥 Download System Docs
+                      </Button>
+                    </div>
                   </div>
-                </div>
                 <div className="prose prose-sm prose-slate max-w-none">
                   {showCode ? (
                     <pre className="whitespace-pre-wrap text-slate-300 text-sm leading-relaxed font-mono bg-slate-950/50 p-4 rounded-lg border border-slate-800 overflow-x-auto">{code || '// No code found.'}</pre>
