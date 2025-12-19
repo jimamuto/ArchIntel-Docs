@@ -1,7 +1,20 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from routers import projects, docs
 
 app = FastAPI(title="ArchIntel Docs Backend")
+
+# CORS setup
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 # Include routers for modular endpoints
 app.include_router(projects.router, prefix="/projects", tags=["Projects"])

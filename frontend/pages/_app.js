@@ -1,10 +1,11 @@
+import '../styles/globals.css';
 import Sidebar from '../components/Sidebar';
 
 export default function App({ Component, pageProps }) {
   return (
-    <div style={{ display: 'flex' }}>
+    <div className="flex">
       <Sidebar />
-      <div style={{ flex: 1, padding: 24 }}>
+      <div className="flex-1 p-6">
         <Component {...pageProps} />
       </div>
     </div>
