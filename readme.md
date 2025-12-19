@@ -1,4 +1,3 @@
-**ArchIntel Docs** project.
 
 ***
 
@@ -307,5 +306,3 @@ You can adapt this section depending on your goals:
   - Keep architectural decisions and UX discussions documented.
 
 ***
-
-This README is intentionally high-level and product-focused, so you can pair it with `archintel-docs-guide.md` for detailed implementation steps, API design, and learning links.
