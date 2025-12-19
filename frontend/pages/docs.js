@@ -6,9 +6,12 @@ import { ScrollArea } from '../components/ui/scroll-area';
 export default function Docs() {
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState('');
+  const [selectedProjectData, setSelectedProjectData] = useState(null);
   const [structure, setStructure] = useState([]);
   const [selectedFile, setSelectedFile] = useState(null);
   const [docs, setDocs] = useState(null);
+  const [code, setCode] = useState(null);
+  const [showCode, setShowCode] = useState(false);
   const [testResults, setTestResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -28,7 +31,12 @@ export default function Docs() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProject) return;
+    if (!selectedProject) {
+      setSelectedProjectData(null);
+      return;
+    }
+    const project = projects.find(p => p.id === selectedProject);
+    setSelectedProjectData(project);
     async function fetchStructure() {
       setLoading(true);
       setError(null);
@@ -43,24 +51,42 @@ export default function Docs() {
       }
     }
     fetchStructure();
-  }, [selectedProject]);
+  }, [selectedProject, projects]);
 
   useEffect(() => {
     if (!selectedProject || !selectedFile) return;
-    async function fetchDocs() {
+    async function fetchDocsAndCode() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}?file=${encodeURIComponent(selectedFile)}`);
-        const data = await res.json();
-        setDocs(data.docs || null);
+        // Fetch docs (AI-generated)
+        const docsRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}?file=${encodeURIComponent(selectedFile)}`);
+        const docsData = await docsRes.json();
+        setDocs(docsData.docs || null);
       } catch (err) {
         setError('Failed to load docs');
+      }
+      try {
+        // Fetch code (raw file content)
+        if (selectedProjectData) {
+          const repoPath = "../" + selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+          const codeRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/file/code?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`);
+          if (codeRes.ok) {
+            const codeText = await codeRes.text();
+            setCode(codeText);
+          } else {
+            setCode('// Could not fetch code. Repository may not be cloned locally.');
+          }
+        } else {
+          setCode('// Project data not available.');
+        }
+      } catch (err) {
+        setCode('// Failed to load code.');
       } finally {
         setLoading(false);
       }
     }
-    fetchDocs();
+    fetchDocsAndCode();
   }, [selectedProject, selectedFile]);
 
   return (
@@ -236,25 +262,37 @@ export default function Docs() {
                   Try Again
                 </Button>
               </Card>
-            ) : docs ? (
+            ) : docs || code ? (
               <Card className="group relative bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6">
                 <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent"></div>
                 <div className="flex items-center justify-between mb-6">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-50 mb-1">Documentation</h2>
+                    <h2 className="text-lg font-semibold text-slate-50 mb-1">{showCode ? 'Source Code' : 'Documentation'}</h2>
                     <p className="text-xs text-slate-500">{selectedFile}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800">
-                      Edit
-                    </Button>
-                    <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800">
-                      Share
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`border-slate-700 text-slate-300 hover:bg-slate-800 ${showCode ? 'bg-emerald-900/30' : ''}`}
+                      onClick={() => setShowCode(!showCode)}
+                    >
+                      {showCode ? 'Show Docs' : 'Show Code'}
                     </Button>
                   </div>
                 </div>
                 <div className="prose prose-sm prose-slate max-w-none">
-                  <pre className="whitespace-pre-wrap text-slate-300 text-sm leading-relaxed font-mono bg-slate-950/50 p-4 rounded-lg border border-slate-800">{docs}</pre>
+                  {showCode ? (
+                    <pre className="whitespace-pre-wrap text-slate-300 text-sm leading-relaxed font-mono bg-slate-950/50 p-4 rounded-lg border border-slate-800 overflow-x-auto">{code || '// No code found.'}</pre>
+                  ) : (
+                    <div className="whitespace-pre-wrap text-slate-300 text-sm leading-relaxed bg-slate-950/50 p-4 rounded-lg border border-slate-800 overflow-x-auto" style={{fontFamily: 'monospace'}}>
+                      {docs ? docs.split('\n').map((line, index) => (
+                        <div key={index} className={line.startsWith('#') ? 'font-bold text-slate-100 mb-2' : line.startsWith('##') ? 'font-semibold text-slate-200 mb-1' : 'mb-1'}>
+                          {line}
+                        </div>
+                      )) : '// No docs found.'}
+                    </div>
+                  )}
                 </div>
               </Card>
             ) : (

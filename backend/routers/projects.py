@@ -1,10 +1,33 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi.responses import PlainTextResponse
 from supabase import create_client, Client
 import os
 import pathlib
 import ast
 
 router = APIRouter()
+
+# --- New endpoint: Extract code from a file for a project ---
+@router.get("/{project_id}/file/code", response_class=PlainTextResponse)
+def get_file_code(project_id: str, path: str = Query(..., description="Relative path of the file in the project"), repo_path: str = Query(None, description="Local path to the repo (optional, for local projects)")):
+    """
+    Returns the code content of a file for a given project and relative file path.
+    If repo_path is not provided, attempts to infer it from the last ingestion (not implemented: for demo, expects repo_path).
+    """
+    try:
+        if not repo_path:
+            raise HTTPException(status_code=400, detail="repo_path is required for now (auto-detection not implemented)")
+        abs_path = os.path.abspath(os.path.join(repo_path, path))
+        # Security: Ensure abs_path is within repo_path
+        if not abs_path.startswith(os.path.abspath(repo_path)):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        if not os.path.exists(abs_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            code = f.read()
+        return code
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Mapping of file extensions to programming languages
 LANGUAGE_EXTENSIONS = {
