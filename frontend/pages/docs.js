@@ -59,35 +59,47 @@ export default function Docs() {
       setLoading(true);
       setError(null);
       try {
-        // Fetch docs (AI-generated)
-        const docsRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}?file=${encodeURIComponent(selectedFile)}`);
-        const docsData = await docsRes.json();
-        setDocs(docsData.docs || null);
-      } catch (err) {
-        setError('Failed to load docs');
-      }
-      try {
-        // Fetch code (raw file content)
+        // Fetch code documentation (AI-generated)
         if (selectedProjectData) {
-          const repoPath = "../" + selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+          // Calculate repository path
+          const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+          let repoPath;
+
+          // Special case: if this is the current repository (ArchIntel-Docs), use current directory
+          if (repoName === 'ArchIntel-Docs' || selectedProjectData.repo_url.includes('ArchIntel-Docs')) {
+            repoPath = '.';
+          } else {
+            repoPath = `repos/${repoName}`;
+          }
+
+          const docRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`);
+          if (docRes.ok) {
+            const docText = await docRes.text();
+            setDocs(docText || null);
+          } else {
+            setDocs('// Could not fetch documentation.');
+          }
+          // Fetch code (raw file content)
           const codeRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/file/code?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`);
           if (codeRes.ok) {
             const codeText = await codeRes.text();
             setCode(codeText);
           } else {
-            setCode('// Could not fetch code. Repository may not be cloned locally.');
+            setCode('// Could not fetch code.');
           }
         } else {
+          setDocs('// Project data not available.');
           setCode('// Project data not available.');
         }
       } catch (err) {
+        setDocs('// Failed to load documentation.');
         setCode('// Failed to load code.');
       } finally {
         setLoading(false);
       }
     }
     fetchDocsAndCode();
-  }, [selectedProject, selectedFile]);
+  }, [selectedProject, selectedFile, selectedProjectData]);
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8">

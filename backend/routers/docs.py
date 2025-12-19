@@ -1,11 +1,14 @@
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse, PlainTextResponse
+import asyncio
 from supabase import create_client, Client
 import os
 import pathlib
 import ast
 import requests
-
 router = APIRouter()
+
+from llm_groq import generate_doc_with_groq
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -36,6 +39,47 @@ def get_docs(project_id: str, file: str = Query(None)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/file/doc", response_class=PlainTextResponse)
+async def get_file_llm_documentation(
+    project_id: str,
+    path: str = Query(..., description="Relative path of the file in the project"),
+    repo_path: str = Query(None, description="Local path to the repo (optional, for local projects)")
+):
+    """
+    Generate documentation for a code file using Groq LLM.
+    """
+    try:
+        if not repo_path:
+            return "Error: repo_path is required for now (auto-detection not implemented)"
+
+        # Handle different repo_path formats (same logic as projects router)
+        if repo_path == ".":
+            # Current directory (project root)
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            repo_path_full = os.path.dirname(backend_dir)  # project root
+        elif repo_path.startswith("repos/"):
+            # Backend is in backend/routers/ directory, so go up three levels to project root
+            current_dir = os.path.dirname(__file__)  # backend/routers/
+            backend_dir = os.path.dirname(current_dir)  # backend/
+            project_root = os.path.dirname(backend_dir)  # project root
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
+
+        abs_path = os.path.abspath(os.path.join(repo_path_full, path))
+        if not abs_path.startswith(os.path.abspath(repo_path_full)):
+            return "Error: Invalid file path"
+        if not os.path.exists(abs_path):
+            return f"Error: File not found - {path}"
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            code = f.read()
+        prompt = f"""Generate clear, concise, and professional documentation for the following code file. Include a summary, usage, and any important details. Use markdown formatting.\n\n---\n\n{code}\n\n---\n"""
+        doc = await generate_doc_with_groq(prompt)
+        return doc
+    except Exception as e:
+        return f"Error generating documentation: {str(e)}"
 
 @router.post("/{project_id}/test")
 def run_project_tests(project_id: str):
