@@ -14,9 +14,14 @@ from routers import projects, docs, system
 app = FastAPI(title="ArchIntel Docs Backend")
 
 # CORS setup
+allowed_origins = [
+    "http://localhost:3000",
+    os.getenv("FRONTEND_URL", "http://localhost:3000")
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
