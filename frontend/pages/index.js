@@ -1,362 +1,367 @@
+import Head from 'next/head';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
+import {
+  ArrowRight,
+  Terminal,
+  GitBranch,
+  Shield,
+  Zap,
+  Search,
+  Code2,
+  Cpu,
+  Database,
+  Layers,
+  Activity,
+  Github,
+  Globe,
+  Check,
+  Hexagon,
+  Sparkles,
+  Command,
+  Bell
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
-export default function Home() {
+// --- GitHub Style Background ---
+const EnhancedBackground = () => (
+  <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+    <div className="absolute inset-0 bg-[#060608]" />
+
+    {/* Radial Aurora Glows */}
+    <div className="github-glow top-[-200px] left-[-200px] opacity-40 scale-150" />
+    <div className="github-glow bottom-[-100px] right-[-100px] opacity-20 scale-125 bg-aurora-cyan" />
+
+    {/* Grid / Lines */}
+    <div
+      className="absolute inset-0 opacity-[0.05]"
+      style={{
+        backgroundImage: `linear-gradient(to right, #444 1px, transparent 1px), linear-gradient(to bottom, #444 1px, transparent 1px)`,
+        backgroundSize: '80px 80px',
+        maskImage: 'radial-gradient(circle at center, black, transparent 80%)'
+      }}
+    />
+
+    {/* Vertical Connector Line (GitHub Style) */}
+    <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-white/10 to-transparent" />
+  </div>
+);
+
+// --- Code Diff Mockup ---
+const DiffMockup = () => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    whileInView={{ opacity: 1, y: 0 }}
+    viewport={{ once: true }}
+    className="w-full max-w-lg rounded-2xl overflow-hidden border border-white/10 bg-[#0d1117] shadow-2xl font-mono text-xs"
+  >
+    <div className="px-4 py-2 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+      <div className="flex gap-1.5">
+        <div className="w-2.5 h-2.5 rounded-full bg-red-500/50" />
+        <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50" />
+        <div className="w-2.5 h-2.5 rounded-full bg-green-500/50" />
+      </div>
+      <span className="text-gray-500">ast_parser.rs — 74% optimized</span>
+    </div>
+    <div className="p-4 space-y-1">
+      <div className="flex bg-red-500/10 -mx-4 px-4"><span className="w-4 text-red-500">-</span><span className="text-gray-500">fn legacy_handler(req: Request) {'{'}</span></div>
+      <div className="flex bg-green-500/10 -mx-4 px-4"><span className="w-4 text-green-500">+</span><span className="text-gray-300">fn intelligent_proxy(req: Request) {'{'}</span></div>
+      <div className="flex px-4"><span className="w-4"> </span><span className="text-gray-500">  // Inferred architectural node</span></div>
+      <div className="flex px-4"><span className="w-4"> </span><span className="text-aurora-purple">  let</span> <span className="text-white">ctx = Context::analyze(req);</span></div>
+    </div>
+  </motion.div>
+);
+
+export default function LandingPage() {
   const [isScrolled, setIsScrolled] = useState(false);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+  const [email, setEmail] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isJoined, setIsJoined] = useState(false);
+
+  const handleWaitlist = (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    // Simulate API call
+    setTimeout(() => {
+      setIsSubmitting(false);
+      setIsJoined(true);
+      setTimeout(() => setShowWaitlist(false), 2000);
+    }, 1500);
+  };
 
   useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
-    };
+    const handleScroll = () => setIsScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      {/* Header/Navigation */}
-      <header className={`fixed top-0 w-full z-50 transition-all duration-300 ${
-        isScrolled
-          ? 'bg-slate-950/80 backdrop-blur-md border-b border-slate-800/50'
-          : 'bg-transparent'
-      }`}>
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-400 rounded-lg flex items-center justify-center">
-                <span className="text-slate-950 text-sm font-bold">A</span>
-              </div>
-              <span className="text-xl font-bold text-slate-50">ArchIntel Docs</span>
-            </div>
+    <div className="min-h-screen bg-[#0d1117] text-white selection:bg-aurora-purple/30 font-sans overflow-x-hidden">
+      <Head>
+        <title>ArchIntel | The Future of Code Intelligence</title>
+        <meta name="description" content="AI-powered architectural analysis and documentation." />
+      </Head>
 
-            <nav className="hidden md:flex items-center gap-8">
-              <a href="#product" className="text-sm text-slate-300 hover:text-slate-50 transition-colors">Product</a>
-              <a href="#how-it-works" className="text-sm text-slate-300 hover:text-slate-50 transition-colors">How it works</a>
-              <a href="#features" className="text-sm text-slate-300 hover:text-slate-50 transition-colors">Features</a>
-              <Link href="/docs">
-                <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800">
-                  Docs
-                </Button>
-              </Link>
-              <Link href="/projects">
-                <Button size="sm" className="bg-emerald-500 hover:bg-emerald-400 text-slate-950">
-                  Get started
-                </Button>
-              </Link>
-            </nav>
+      <EnhancedBackground />
 
-            {/* Mobile menu button */}
-            <Button variant="ghost" size="sm" className="md:hidden">
-              <span className="sr-only">Menu</span>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </Button>
+      {/* Navigation */}
+      <nav className={cn(
+        "fixed top-0 w-full z-50 transition-all duration-500 border-b",
+        isScrolled ? "bg-black/60 backdrop-blur-xl border-white/[0.08] py-4" : "bg-transparent border-transparent py-8"
+      )}>
+        <div className="container mx-auto px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Hexagon className="w-8 h-8 text-aurora-purple fill-aurora-purple/10" />
+            <span className="font-bold text-xl tracking-tight font-mono">ArchIntel</span>
           </div>
-        </div>
-      </header>
-
-      <main>
-        {/* Hero Section */}
-        <section className="relative pt-32 pb-16 sm:pt-40 sm:pb-20">
-          <div className="absolute inset-0 opacity-20">
-            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl"></div>
-            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl"></div>
+          <div className="hidden lg:flex items-center gap-8 text-sm font-medium text-gray-400">
+            <Link href="#features" className="hover:text-white transition-colors">OS Analysis</Link>
+            <Link href="#architecture" className="hover:text-white transition-colors">Knowledge Graph</Link>
+            <Link href="/docs" className="hover:text-white transition-colors">Docs Explorer</Link>
           </div>
-
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-              <div>
-                <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-slate-50 mb-6">
-                  Architecture-aware AI documentation for complex codebases
-                </h1>
-                <p className="text-base text-slate-300 mb-8 leading-relaxed">
-                  Transform your codebase into living, intelligent documentation. Understand how your code evolved, capture team rationale, and keep docs synchronized with every change.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <Link href="/projects">
-                    <Button className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-8 py-3 text-base font-medium shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all duration-300 hover:scale-[1.02]">
-                      Get started
-                    </Button>
-                  </Link>
-                  <Button variant="outline" className="w-full sm:w-auto border-slate-700 text-slate-300 hover:bg-slate-800 px-8 py-3">
-                    View live demo
-                  </Button>
-                </div>
-              </div>
-
-              {/* Hero Visual */}
-              <div className="lg:ml-auto">
-                <div className="relative">
-                  <div className="bg-slate-900/60 backdrop-blur-sm border border-slate-800/50 rounded-xl p-6 shadow-2xl">
-                    <div className="space-y-4">
-                      {/* Mock dashboard preview */}
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-3 h-3 bg-emerald-400 rounded-full"></div>
-                        <span className="text-sm text-slate-300">ArchIntel Docs Dashboard</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="bg-slate-800/50 rounded-lg p-3">
-                          <div className="w-8 h-8 bg-emerald-500/20 rounded mb-2"></div>
-                          <div className="h-2 bg-slate-700 rounded mb-1"></div>
-                          <div className="h-2 bg-slate-700 rounded w-2/3"></div>
-                        </div>
-                        <div className="bg-slate-800/50 rounded-lg p-3">
-                          <div className="w-8 h-8 bg-cyan-500/20 rounded mb-2"></div>
-                          <div className="h-2 bg-slate-700 rounded mb-1"></div>
-                          <div className="h-2 bg-slate-700 rounded w-3/4"></div>
-                        </div>
-                      </div>
-                      <div className="bg-slate-800/50 rounded-lg p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs text-slate-400">📄</span>
-                          <span className="text-sm text-slate-300">Documentation</span>
-                        </div>
-                        <div className="h-2 bg-slate-700 rounded mb-1"></div>
-                        <div className="h-2 bg-slate-700 rounded w-4/5"></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Key Benefits / Value Props */}
-        <section className="py-16 bg-slate-950/95">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-xl font-semibold text-slate-50 mb-4">Why teams choose ArchIntel</h2>
-              <p className="text-slate-300 max-w-2xl mx-auto">Built for modern engineering teams who need documentation that stays current with their evolving codebase.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 hover:bg-slate-900/80 hover:border-emerald-500/30 transition-all duration-300">
-                <div className="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-emerald-400 text-xl">🏗️</span>
-                </div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Understands Architecture</h3>
-                <p className="text-xs text-slate-400">Deep analysis of code structure, dependencies, and design patterns.</p>
-              </Card>
-
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 hover:bg-slate-900/80 hover:border-emerald-500/30 transition-all duration-300">
-                <div className="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-emerald-400 text-xl">📈</span>
-                </div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Tracks Evolution</h3>
-                <p className="text-xs text-slate-400">Git history integration shows how and why code changed over time.</p>
-              </Card>
-
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 hover:bg-slate-900/80 hover:border-emerald-500/30 transition-all duration-300">
-                <div className="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-emerald-400 text-xl">💬</span>
-                </div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Captures Rationale</h3>
-                <p className="text-xs text-slate-400">Preserves team discussions, decisions, and architectural reasoning.</p>
-              </Card>
-
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 hover:bg-slate-900/80 hover:border-emerald-500/30 transition-all duration-300">
-                <div className="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-emerald-400 text-xl">🔄</span>
-                </div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Stays in Sync</h3>
-                <p className="text-xs text-slate-400">CI/CD integration keeps documentation current with every deployment.</p>
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* How It Works */}
-        <section className="py-16 bg-slate-950">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-xl font-semibold text-slate-50 mb-4">How it works</h2>
-              <p className="text-slate-300">Four simple steps to transform your codebase into intelligent documentation.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">1</div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Connect Repository</h3>
-                <p className="text-xs text-slate-400">Link your Git repository with a single command or API call.</p>
-              </div>
-
-              <div className="text-center">
-                <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">2</div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">AI Analysis</h3>
-                <p className="text-xs text-slate-400">Deep learning models analyze code structure, patterns, and evolution.</p>
-              </div>
-
-              <div className="text-center">
-                <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">3</div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Generate Docs</h3>
-                <p className="text-xs text-slate-400">Create comprehensive documentation with context and rationale.</p>
-              </div>
-
-              <div className="text-center">
-                <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">4</div>
-                <h3 className="text-sm font-semibold text-slate-50 mb-2">Ask Questions</h3>
-                <p className="text-xs text-slate-400">Interactive Q&A system answers questions about your codebase.</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Social Proof / Trust */}
-        <section className="py-16 bg-slate-950/95">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="text-center mb-12">
-              <h2 className="text-xl font-semibold text-slate-50 mb-4">Trusted by engineering teams</h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center">
-                    <span className="text-slate-400 text-lg">👤</span>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-300 mb-4 italic">
-                      "ArchIntel transformed how our team documents complex systems. The AI understands our architecture better than any human could."
-                    </p>
-                    <div className="text-xs text-slate-500">
-                      <div className="font-medium text-slate-400">Sarah Chen</div>
-                      <div>Engineering Lead, TechCorp</div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-
-              <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center">
-                    <span className="text-slate-400 text-lg">👤</span>
-                  </div>
-                  <div>
-                    <p className="text-sm text-slate-300 mb-4 italic">
-                      "Finally, documentation that stays current. No more outdated wikis or missing context about why decisions were made."
-                    </p>
-                    <div className="text-xs text-slate-500">
-                      <div className="font-medium text-slate-400">Marcus Rodriguez</div>
-                      <div>Senior Developer, StartupXYZ</div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </div>
-          </div>
-        </section>
-
-        {/* Feature Highlights */}
-        <section className="py-16 bg-slate-950">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-50 mb-4">Interactive Documentation Explorer</h2>
-                <p className="text-slate-300 mb-6">
-                  Browse your codebase with an intuitive file tree, view AI-generated documentation for any component, and understand how your code evolved through comprehensive history tracking.
-                </p>
-                <ul className="space-y-2 text-sm text-slate-400">
-                  <li>• Real-time code analysis and insights</li>
-                  <li>• Interactive file tree navigation</li>
-                  <li>• Context-aware documentation generation</li>
-                  <li>• Git history integration</li>
-                </ul>
-              </div>
-              <div className="lg:ml-auto">
-                <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 max-w-md">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-emerald-400">📁</span>
-                      <span className="text-sm text-slate-300">src/components</span>
-                    </div>
-                    <div className="bg-slate-800/50 rounded p-3">
-                      <div className="text-xs text-slate-400 mb-2">Documentation</div>
-                      <div className="text-sm text-slate-300">This component handles user authentication flow with OAuth integration...</div>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      <span>📈</span>
-                      <span>12 commits • 3 contributors</span>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Final CTA */}
-        <section className="py-16 bg-gradient-to-r from-emerald-500/5 via-transparent to-cyan-500/5">
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 className="text-xl font-semibold text-slate-50 mb-4">Ready to transform your documentation?</h2>
-            <p className="text-slate-300 mb-8">Join engineering teams who have already revolutionized how they document and understand their codebases.</p>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowWaitlist(true)}
+              className="text-gray-400 hover:text-white transition-colors text-sm font-medium mr-4 hidden sm:block"
+            >
+              Waitlist
+            </button>
             <Link href="/projects">
-              <Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-8 py-3 text-base font-medium shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all duration-300 hover:scale-[1.02]">
-                Get started for free
+              <Button className="bg-aurora-purple hover:bg-aurora-purple/80 text-white rounded-full px-6 py-5 font-bold text-sm shadow-glow transition-all hover:scale-105">
+                Start Analysis
               </Button>
             </Link>
-            <p className="text-xs text-slate-500 mt-4">No credit card required • 14-day free trial</p>
           </div>
-        </section>
-      </main>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <section className="relative pt-48 pb-32 flex flex-col items-center text-center px-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 1.2, ease: "easeOut" }}
+          className="absolute top-20 w-[800px] h-[800px] pointer-events-none opacity-40 blur-[150px] bg-aurora-purple/20 rounded-full"
+        />
+
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8 }}
+          className="z-10"
+        >
+          <div className="inline-flex items-center gap-2 px-4 py-1 rounded-full border border-white/10 bg-white/5 text-[10px] font-bold uppercase tracking-[0.2em] mb-10 text-aurora-cyan shadow-inner">
+            <Sparkles className="w-3 h-3" />
+            Next-Gen Codebase Mapping
+          </div>
+
+          <h1 className="text-massive mb-8">
+            The future of <br />
+            <span className="aurora-gradient-text">code intelligence.</span>
+          </h1>
+
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-12 leading-relaxed font-medium">
+            ArchIntel transforms your chaotic repositories into high-fidelity knowledge graphs. Understand every relationship, dependency, and design pattern in seconds.
+          </p>
+
+          <div className="flex flex-wrap items-center justify-center gap-6">
+            <Link href="/projects">
+              <Button size="lg" className="h-14 px-10 rounded-full bg-aurora-purple hover:bg-aurora-purple/80 text-white font-black text-lg shadow-glow">
+                Try for Free
+              </Button>
+            </Link>
+            <Button size="lg" variant="outline" className="h-14 px-10 rounded-full border-white/10 bg-white/5 hover:bg-white/10 text-white gap-3 group transition-all">
+              <Command className="w-5 h-5 text-gray-500 group-hover:text-white" />
+              Documentation
+            </Button>
+          </div>
+        </motion.div>
+
+        {/* Intelligence Node Visualization */}
+        <motion.div
+          initial={{ opacity: 0, y: 100 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1.5, delay: 0.4 }}
+          className="mt-24 relative group"
+        >
+          <div className="absolute inset-0 bg-aurora-purple/20 blur-[100px] rounded-full group-hover:bg-aurora-purple/30 transition-all duration-1000" />
+          <img
+            src="/images/hero-node.png"
+            alt="Architectural node"
+            className="w-full max-w-4xl relative z-10 drop-shadow-[0_0_50px_rgba(178,110,247,0.3)] select-none pointer-events-none"
+          />
+          {/* Floating HUD elements */}
+          <motion.div
+            animate={{ y: [0, -10, 0] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+            className="absolute -right-10 top-20 p-4 aurora-glass rounded-2xl z-20 hidden lg:block"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-[10px] uppercase font-black text-white/70">Scanning Modules</span>
+            </div>
+          </motion.div>
+        </motion.div>
+      </section>
+
+      {/* Bento Grid Section */}
+      <section id="features" className="py-32 relative px-6">
+        <div className="container mx-auto">
+          <div className="mb-20 text-center lg:text-left">
+            <h2 className="text-4xl md:text-5xl font-black tracking-tighter mb-4">Engineered for Devs.</h2>
+            <p className="text-gray-500 max-w-xl text-lg font-medium">ArchIntel doesn't just read code; it understands the engineering intent behind it.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 md:grid-rows-2 gap-6 min-h-[700px]">
+            {/* Main Feature - AST Analysis */}
+            <div className="bento-card md:col-span-2 md:row-span-2 flex flex-col justify-between group">
+              <div>
+                <div className="w-12 h-12 rounded-2xl bg-aurora-purple/10 flex items-center justify-center mb-6">
+                  <Layers className="w-6 h-6 text-aurora-purple" />
+                </div>
+                <h3 className="text-2xl font-black mb-4 group-hover:text-aurora-purple transition-colors">AST Deep-Dive Analysis</h3>
+                <p className="text-gray-400 leading-relaxed text-sm">
+                  We parse the raw Abstract Syntax Tree of your project to detect architectural patterns, design smells, and hidden dependencies that traditional scanners miss.
+                </p>
+              </div>
+              <div className="mt-8 pt-8 border-t border-white/5">
+                <DiffMockup />
+              </div>
+            </div>
+
+            {/* Feature 2 - Intelligence Node */}
+            <div className="bento-card md:col-span-2 group">
+              <div className="flex items-start justify-between">
+                <div className="max-w-[180px]">
+                  <h3 className="text-xl font-black mb-2">The Oracle Search</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">Ask "Where is auth handled?" and get a structural graph response instead of text results.</p>
+                </div>
+                <div className="w-24 h-24 rounded-full bg-aurora-cyan/10 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <Search className="w-10 h-10 text-aurora-cyan" />
+                </div>
+              </div>
+            </div>
+
+            {/* Feature 3 - Live Sync */}
+            <div className="bento-card group">
+              <div className="h-full flex flex-col justify-between">
+                <Activity className="w-8 h-8 text-orange-500" />
+                <div>
+                  <h3 className="text-lg font-black mb-1">Mirror Sync</h3>
+                  <p className="text-[10px] text-gray-400">Real-time GitHub webhooks.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Feature 4 - Export */}
+            <div className="bento-card group h-full">
+              <div className="h-full flex flex-col justify-between">
+                <Database className="w-8 h-8 text-aurora-pink" />
+                <div>
+                  <h3 className="text-lg font-black mb-1">System Export</h3>
+                  <p className="text-[10px] text-gray-400">PDF, Markdown & JSON.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Final Section - GitHub Style Gradient Bar */}
+      <section className="py-40 relative flex flex-col items-center justify-center text-center overflow-hidden">
+        <div className="absolute top-0 w-[400px] h-[400px] bg-aurora-purple/30 blur-[150px] opacity-20" />
+        <h2 className="text-5xl md:text-7xl font-black tracking-tighter mb-10 z-10 leading-[0.9]">Ready to see <br />the full graph?</h2>
+        <Link href="/projects" className="z-10 mt-6">
+          <Button size="lg" className="h-16 px-14 rounded-full bg-aurora-purple hover:bg-aurora-purple/80 text-white font-black text-xl shadow-glow transition-all hover:scale-105">
+            Register Repository
+          </Button>
+        </Link>
+        <button
+          onClick={() => setShowWaitlist(true)}
+          className="mt-8 text-aurora-cyan hover:text-white transition-colors font-mono text-xs uppercase tracking-[0.3em] font-bold z-10"
+        >
+          Join Exclusive Beta Waitlist →
+        </button>
+        <p className="mt-8 text-gray-600 font-mono text-xs uppercase tracking-widest z-10">Trusted by modern engineering teams.</p>
+      </section>
+
+      {/* Waitlist Modal */}
+      <AnimatePresence>
+        {showWaitlist && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowWaitlist(false)}
+              className="absolute inset-0 bg-black/90 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="w-full max-w-lg bg-[#0d1117] border border-white/10 rounded-[2rem] p-10 relative z-10 shadow-3xl overflow-hidden"
+            >
+              <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-aurora-purple via-aurora-cyan to-aurora-pink" />
+
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-2xl bg-aurora-purple/10 border border-aurora-purple/20 flex items-center justify-center mx-auto mb-6">
+                  <Bell className="w-8 h-8 text-aurora-purple animate-pulse" />
+                </div>
+                <h2 className="text-3xl font-black tracking-tighter text-white mb-2">Secure your spot.</h2>
+                <p className="text-gray-400 mb-8 font-medium">Join 500+ engineers waiting to unlock structural codebase intelligence.</p>
+
+                {isJoined ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-6 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-500 font-bold"
+                  >
+                    You're on the list! We'll reach out soon.
+                  </motion.div>
+                ) : (
+                  <form onSubmit={handleWaitlist} className="space-y-4">
+                    <input
+                      required
+                      type="email"
+                      placeholder="name@company.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full h-14 bg-black border border-white/10 rounded-2xl px-6 font-medium text-white focus:outline-none focus:border-aurora-purple/50 transition-all font-mono"
+                    />
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="w-full h-14 bg-aurora-purple hover:bg-aurora-purple/80 text-white font-black text-lg rounded-2xl shadow-glow"
+                    >
+                      {isSubmitting ? "Processing..." : "Join Phase 1 Beta"}
+                    </Button>
+                  </form>
+                )}
+
+                <p className="mt-8 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
+                  Zero Spam. Only Architectural Updates.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Footer */}
-      <footer className="bg-slate-950 border-t border-slate-900 py-12">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-400 rounded-lg flex items-center justify-center">
-                  <span className="text-slate-950 text-sm font-bold">A</span>
-                </div>
-                <span className="text-lg font-bold text-slate-50">ArchIntel Docs</span>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                AI-powered documentation that understands your codebase architecture, evolution, and team context.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-semibold text-slate-50 mb-4">Product</h3>
-              <ul className="space-y-2 text-xs text-slate-500">
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Features</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Pricing</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Integrations</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">API</a></li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-semibold text-slate-50 mb-4">Resources</h3>
-              <ul className="space-y-2 text-xs text-slate-500">
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Documentation</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Community</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Blog</a></li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-semibold text-slate-50 mb-4">Company</h3>
-              <ul className="space-y-2 text-xs text-slate-500">
-                <li><a href="#" className="hover:text-slate-300 transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Contact</a></li>
-                <li><a href="#" className="hover:text-slate-300 transition-colors">Privacy</a></li>
-              </ul>
-            </div>
+      <footer className="py-20 border-t border-white/5 bg-[#060608] px-6">
+        <div className="container mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+          <div className="flex items-center gap-3">
+            <Hexagon className="w-6 h-6 text-gray-700" />
+            <span className="font-bold text-gray-600 font-mono text-sm tracking-widest uppercase">ArchIntel Engine</span>
           </div>
-
-          <div className="border-t border-slate-900 mt-8 pt-8 flex flex-col sm:flex-row justify-between items-center">
-            <p className="text-xs text-slate-500">© 2025 ArchIntel Docs. All rights reserved.</p>
-            <div className="flex items-center gap-4 mt-4 sm:mt-0">
-              <a href="#" className="text-xs text-slate-500 hover:text-slate-300 transition-colors">Terms</a>
-              <a href="#" className="text-xs text-slate-500 hover:text-slate-300 transition-colors">Privacy</a>
-              <a href="#" className="text-xs text-slate-500 hover:text-slate-300 transition-colors">Cookies</a>
-            </div>
+          <div className="flex items-center gap-10 text-xs font-mono text-gray-600 uppercase tracking-tighter">
+            <span>© 2025 Neural Fabric</span>
+            <Link href="#" className="hover:text-white transition-colors">Privacy</Link>
+            <Link href="#" className="hover:text-white transition-colors">Security</Link>
           </div>
         </div>
       </footer>

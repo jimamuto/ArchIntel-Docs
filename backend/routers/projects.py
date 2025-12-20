@@ -240,6 +240,22 @@ def get_projects():
     try:
         response = supabase.table("projects").select("id, name, repo_url, status, created_at, updated_at").execute()
         projects = response.data if hasattr(response, 'data') else response["data"]
+        
+        # Enrich each project with real-time stats
+        for project in projects:
+            # Get file count and languages
+            files_response = supabase.table("files").select("language").eq("project_id", project["id"]).execute()
+            files = files_response.data if hasattr(files_response, 'data') else files_response["data"]
+            
+            project["file_count"] = len(files)
+            
+            # Extract unique languages
+            languages = list(set([f["language"] for f in files if f.get("language") and f["language"] != "unknown"]))
+            project["languages"] = languages[:5]  # Limit to top 5
+            
+            # Set last_analyzed to updated_at or created_at
+            project["last_analyzed"] = project.get("updated_at") or project.get("created_at")
+        
         return {"projects": projects}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -252,7 +268,18 @@ async def register_project(request: Request):
     if not name or not repo_url:
         raise HTTPException(status_code=400, detail="Missing name or repo_url")
     try:
-        response = supabase.table("projects").insert({"name": name, "repo_url": repo_url, "status": "ready"}).execute()
+        # Check for existing project
+        existing = supabase.table("projects").select("*").eq("repo_url", repo_url).execute()
+        existing_data = existing.data if hasattr(existing, 'data') else existing["data"]
+        
+        if existing_data:
+            # Update
+            project_id = existing_data[0]["id"]
+            response = supabase.table("projects").update({"name": name, "status": "ready"}).eq("id", project_id).execute()
+        else:
+            # Insert
+            response = supabase.table("projects").insert({"name": name, "repo_url": repo_url, "status": "ready"}).execute()
+            
         project = response.data[0] if hasattr(response, 'data') and response.data else response["data"][0]
         return {"message": "Project registered", "project": project}
     except Exception as e:
@@ -379,12 +406,17 @@ def clone_and_ingest_code(project_id: str):
 
             if files_to_insert:
                 supabase.table("files").insert(files_to_insert).execute()
+                # Update project status to active after successful ingestion
+                supabase.table("projects").update({"status": "active"}).eq("id", project_id).execute()
+                
                 return {
                     "message": f"Successfully scanned {len(files_to_insert)} files for {project['name']} (metadata only)",
                     "files_count": len(files_to_insert),
                     "note": "File content not stored in database for security. Access via local repository."
                 }
             else:
+                # If no files found, still set to active (or ready) to clear the "analyzing" state
+                supabase.table("projects").update({"status": "active"}).eq("id", project_id).execute()
                 return {"message": f"No files found in {project['name']}"}
 
         finally:
@@ -395,8 +427,25 @@ def clone_and_ingest_code(project_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/{project_id}/sync")
+async def sync_project(project_id: str):
+    """
+    Synchronizes the project by deleting existing metadata and re-scanning.
+    """
+    try:
+        # 1. Delete existing files
+        supabase.table("files").delete().eq("project_id", project_id).execute()
+        
+        # 2. Update status
+        supabase.table("projects").update({"status": "analyzing"}).eq("id", project_id).execute()
+        
+        # 3. Trigger re-ingestion
+        return clone_and_ingest_code(project_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/{project_id}")
-def delete_project(project_id: str):
+async def delete_project(project_id: str):
     try:
         # First delete all files associated with the project
         supabase.table("files").delete().eq("project_id", project_id).execute()
@@ -404,8 +453,9 @@ def delete_project(project_id: str):
         # Then delete the project itself
         response = supabase.table("projects").delete().eq("id", project_id).execute()
 
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Project not found")
+        if not hasattr(response, 'data') or not response.data:
+             if not isinstance(response, dict) or not response.get("data"):
+                 raise HTTPException(status_code=404, detail="Project not found")
 
         return {"message": "Project deleted successfully"}
 

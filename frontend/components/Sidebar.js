@@ -1,128 +1,86 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import {
+    LayoutDashboard,
+    Search,
+    Zap,
+    Settings,
+    Code2,
+    Activity,
+    Box
+} from 'lucide-react';
+import { cn } from '../lib/utils';
 
-export default function Sidebar({ children }) {
-  const router = useRouter();
+const SidebarItem = ({ icon: Icon, href, active, label }) => (
+    <Link
+        href={href}
+        className={cn(
+            "group relative flex items-center justify-center h-12 w-12 rounded-xl transition-all duration-300 mb-2",
+            active
+                ? "bg-aurora-purple/10 text-aurora-purple shadow-glow shadow-aurora-purple/20"
+                : "text-gray-500 hover:text-gray-300 hover:bg-white/[0.05]"
+        )}
+        title={label}
+    >
+        <Icon className={cn("w-5 h-5", active && "scale-110")} />
+        {active && (
+            <div className="absolute left-0 w-1 h-6 bg-aurora-purple rounded-r-full" />
+        )}
+    </Link>
+);
 
-  const isActive = (path) => {
-    if (path === '/') {
-      return router.pathname === '/';
-    }
-    return router.pathname.startsWith(path);
-  };
+export default function Sidebar() {
+    const router = useRouter();
 
-  const navItems = [
-    {
-      href: '/',
-      label: 'Home',
-      icon: '🏠',
-      description: 'Dashboard overview'
-    },
-    {
-      href: '/projects',
-      label: 'Projects',
-      icon: '📁',
-      description: 'Manage codebases'
-    },
-    {
-      href: '/docs',
-      label: 'Docs Explorer',
-      icon: '📄',
-      description: 'Browse documentation'
-    }
-  ];
+    // Don't show sidebar on landing page if you prefer, 
+    // but the user asked for navigation through pages.
+    // We can hide it on '/' if we want, but let's keep it for now as a global app scaffold.
+    if (router.pathname === '/') return null;
 
-  return (
-    <aside className="w-64 bg-gradient-to-b from-slate-950 to-slate-900 border-r border-slate-800/50 min-h-screen flex flex-col relative overflow-hidden">
-      {/* Subtle background pattern */}
-      <div className="absolute inset-0 opacity-20">
-        <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-emerald-500/30 to-transparent"></div>
-      </div>
+    const navItems = [
+        { icon: LayoutDashboard, href: '/projects', label: 'Dashboard' },
+        { icon: Search, href: '/docs', label: 'Explorer' },
+        { icon: Box, href: '/integrations', label: 'Integrations' },
+    ];
 
-      {/* Header */}
-      <div className="relative flex-shrink-0 p-5 border-b border-slate-800/30">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-400 rounded-lg flex items-center justify-center shadow-lg shadow-emerald-500/20">
-            <span className="text-slate-950 text-sm font-bold">A</span>
-          </div>
-          <div>
-            <h2 className="text-sm font-bold text-slate-50">ArchIntel</h2>
-            <p className="text-xs text-slate-400">Docs</p>
-          </div>
-        </div>
-        <p className="text-xs text-slate-500 leading-tight">
-          AI-powered documentation for modern development teams
-        </p>
-      </div>
-
-      {/* Navigation */}
-      <nav className="relative flex-shrink-0 p-3">
-        <div className="mb-3">
-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-3 mb-2">
-            Navigation
-          </h3>
-        </div>
-        <ul className="space-y-1">
-          {navItems.map((item) => (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  isActive(item.href)
-                    ? 'bg-emerald-500/10 text-emerald-300 border-l-2 border-emerald-500 shadow-sm shadow-emerald-500/10'
-                    : 'text-slate-300 hover:bg-slate-800/80 hover:text-slate-50 hover:translate-x-1'
-                }`}
-              >
-                <span className={`flex h-6 w-6 items-center justify-center rounded-md transition-all duration-200 ${
-                  isActive(item.href)
-                    ? 'bg-emerald-500/20 text-emerald-300'
-                    : 'bg-slate-800 text-slate-500 group-hover:bg-slate-700'
-                }`}>
-                  {item.icon}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="truncate">{item.label}</div>
-                  <div className={`text-xs transition-opacity duration-200 ${
-                    isActive(item.href) ? 'text-emerald-400/70' : 'text-slate-500 opacity-0 group-hover:opacity-100'
-                  }`}>
-                    {item.description}
-                  </div>
+    return (
+        <aside className="w-[68px] h-screen bg-[#0A0C10] border-r border-aurora-border flex flex-col items-center py-6 flex-shrink-0 z-50">
+            {/* Logo */}
+            <Link href="/" className="mb-8 group">
+                <div className="w-10 h-10 rounded-xl bg-[#15171B] border border-white/[0.08] flex items-center justify-center group-hover:border-aurora-purple/50 transition-all duration-500 shadow-lg">
+                    <Code2 className="w-6 h-6 text-aurora-purple group-hover:scale-110 transition-transform" />
                 </div>
-                {isActive(item.href) && (
-                  <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></div>
-                )}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
+            </Link>
 
-      {/* Content Area - This should expand to fill remaining space */}
-      <div className="relative flex-1 min-h-0 p-4">
-        <div className="h-full rounded-lg bg-slate-900/30 backdrop-blur-sm border border-slate-800/30 p-4 overflow-hidden">
-          {children || (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mb-3">
-                <span className="text-slate-400">⚡</span>
-              </div>
-              <p className="text-xs text-slate-400 leading-tight">
-                Quick actions and<br />recent activity
-              </p>
+            {/* Navigation */}
+            <div className="flex-1 flex flex-col items-center w-full">
+                {navItems.map((item) => (
+                    <SidebarItem
+                        key={item.href}
+                        {...item}
+                        active={router.pathname === item.href || (item.href === '/projects' && router.pathname.startsWith('/projects/'))}
+                    />
+                ))}
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Footer */}
-      <div className="relative flex-shrink-0 p-4 border-t border-slate-800/30">
-        <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>v1.0.0</span>
-          <div className="flex items-center gap-1">
-            <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
-            <span>Online</span>
-          </div>
-        </div>
-      </div>
-    </aside>
-  );
+            {/* Bottom Actions */}
+            <div className="flex flex-col items-center gap-4">
+                <Link href="/activity" className={cn(
+                    "h-10 w-10 flex items-center justify-center transition-colors rounded-xl",
+                    router.pathname === '/activity' ? "text-aurora-cyan bg-aurora-cyan/10" : "text-gray-500 hover:text-white"
+                )}>
+                    <Activity className="w-5 h-5" />
+                </Link>
+                <Link href="/settings" className={cn(
+                    "h-10 w-10 flex items-center justify-center transition-colors rounded-xl",
+                    router.pathname === '/settings' ? "text-aurora-purple bg-aurora-purple/10" : "text-gray-500 hover:text-white"
+                )}>
+                    <Settings className="w-5 h-5" />
+                </Link>
+                <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-aurora-purple to-aurora-cyan border border-white/10 shadow-inner flex items-center justify-center text-[10px] font-bold text-white cursor-pointer">
+                    JD
+                </div>
+            </div>
+        </aside>
+    );
 }

@@ -1,239 +1,541 @@
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/router';
+import Link from 'next/link';
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
-import { Input } from '../components/ui/input';
+import {
+  Plus,
+  Trash2,
+  GitBranch,
+  Search,
+  MoreHorizontal,
+  Folder,
+  ArrowRight,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  LayoutDashboard,
+  Settings,
+  Bell,
+  Filter,
+  ArrowUpDown,
+  Code2,
+  Database,
+  Activity,
+  Terminal,
+  ChevronDown,
+  Github,
+  Zap,
+  RefreshCw,
+  X
+} from 'lucide-react';
+import { useToast } from '../lib/toast';
+import { cn } from '../lib/utils';
+import Head from 'next/head';
+
+// --- Background Component ---
+const BlueprintBackground = () => (
+  <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none">
+    <div className="absolute inset-0 bg-aurora-bg" />
+    <div
+      className="absolute inset-0 opacity-[0.05]"
+      style={{
+        backgroundImage: `linear-gradient(#232329 1px, transparent 1px), linear-gradient(to right, #232329 1px, transparent 1px)`,
+        backgroundSize: '3rem 3rem',
+        maskImage: 'radial-gradient(ellipse at center, white 20%, transparent 80%)'
+      }}
+    />
+  </div>
+);
+
+const UserNav = () => (
+  <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-aurora-purple to-aurora-cyan border border-white/10 shadow-inner flex items-center justify-center text-[10px] font-bold text-white">
+    JD
+  </div>
+);
 
 interface Project {
   id: number;
   name: string;
   repo_url: string;
-  status?: string;
+  status: 'active' | 'analyzing' | 'error' | 'archived' | 'ready';
   created_at?: string;
+  last_analyzed?: string;
+  file_count?: number;
+  languages?: string[];
 }
 
-export default function Projects() {
+export default function DashboardPage() {
+  const router = useRouter();
+  const { success: showToast, error: showError } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState({ projects: true, submission: false, syncing: false });
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showCLIModal, setShowCLIModal] = useState(false);
+  const [syncingIds, setSyncingIds] = useState<Set<number>>(new Set());
+
+  async function handleSync(id: number) {
+    setSyncingIds(prev => new Set(prev).add(id));
+    try {
+      const project = projects.find(p => p.id === id);
+      if (!project) return;
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}/sync`, {
+        method: 'POST'
+      });
+
+      if (res.ok) {
+        showToast(`Synchronization initialized for ${project.name}.`);
+        // Refresh project list after a short delay to see status changes
+        setTimeout(async () => {
+          const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+          const refreshData = await refresh.json();
+          setProjects(refreshData.projects || []);
+        }, 1000);
+      } else {
+        showError("Sync failed.");
+      }
+    } catch (err) {
+      showError("Connection lost.");
+    } finally {
+      setSyncingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  async function deleteProject(id: number) {
+    if (!confirm('Are you sure you want to terminate this node?')) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setProjects(projects.filter(p => p.id !== id));
+        showToast("Node terminated.");
+      } else {
+        showError("Termination failed.");
+      }
+    } catch (err) {
+      showError("Connection lost.");
+    }
+  }
+
+  // Form State
   const [name, setName] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [deletingProject, setDeletingProject] = useState<string | null>(null);
 
+  // Filter State
+  const [filter, setFilter] = useState('');
+
+  // Fetch projects
   useEffect(() => {
     async function fetchProjects() {
-      setLoading(true);
-      setError(null);
+      setLoading(prev => ({ ...prev, projects: true }));
       try {
         const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
-        if (!res.ok) throw new Error('Failed to fetch projects');
+        if (!res.ok) throw new Error('Failed to fetch');
         const data = await res.json();
         setProjects(data.projects || []);
       } catch (err) {
-        setError((err as Error).message);
+        console.error(err);
       } finally {
-        setLoading(false);
+        setLoading(prev => ({ ...prev, projects: false }));
       }
     }
     fetchProjects();
-  }, [success]);
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    setSuccess(null);
+    setLoading(prev => ({ ...prev, submission: true }));
     try {
-      // First register the project
-      const registerRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, repo_url: repoUrl })
       });
-      if (!registerRes.ok) throw new Error('Failed to register project');
+      if (!res.ok) throw new Error('Failed to create');
+      const data = await res.json();
 
-      const registerData = await registerRes.json();
-      const projectId = registerData.project.id;
+      // Background clone
+      fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${data.project.id}/clone`, { method: 'POST' }).catch(() => { });
 
-      // Then automatically clone and ingest the repository
-      try {
-        const cloneRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${projectId}/clone`, {
-          method: 'POST'
-        });
+      showToast('Project created successfully');
+      setShowCreateForm(false);
+      setName(''); setRepoUrl('');
 
-        if (cloneRes.ok) {
-          const cloneData = await cloneRes.json();
-          setSuccess(`Project registered and ${cloneData.message.split(' ')[3]} files ingested!`);
-        } else {
-          setSuccess('Project registered! Repository cloning may take a moment - check back soon.');
-        }
-      } catch (cloneErr) {
-        setSuccess('Project registered! Repository cloning may take a moment - check back soon.');
-      }
-
-      setName('');
-      setRepoUrl('');
+      // Refresh
+      const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+      const refreshData = await refresh.json();
+      setProjects(refreshData.projects || []);
     } catch (err) {
-      setError((err as Error).message);
+      showError('Failed to create project');
     } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleDelete(projectId: string | number) {
-    if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
-      return;
-    }
-
-    setDeletingProject(projectId.toString());
-    setError(null);
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${projectId}`, {
-        method: 'DELETE'
-      });
-      if (!res.ok) throw new Error('Failed to delete project');
-
-      // Remove the project from the list
-      setProjects(projects.filter(p => p.id !== projectId));
-      setSuccess('Project deleted successfully!');
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setDeletingProject(null);
+      setLoading(prev => ({ ...prev, submission: false }));
     }
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-50 mb-2">Projects</h1>
-            <p className="text-sm text-slate-400">Manage and explore your codebase documentation</p>
+    <div className="min-h-screen flex flex-col bg-aurora-bg text-slate-200 font-sans selection:bg-aurora-purple/30">
+      <Head>
+        <title>Dashboard | ArchIntel</title>
+      </Head>
+
+      <BlueprintBackground />
+
+      {/* 1. Specialized Technical Navbar */}
+      <header className="h-16 border-b border-aurora-border bg-[#0A0C10]/80 backdrop-blur-md sticky top-0 z-50">
+        <div className="container mx-auto h-full px-6 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-white/50 font-mono">Registry</h2>
+            <div className="h-4 w-px bg-white/[0.1]" />
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+              <input
+                type="text"
+                placeholder="Search resources..."
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                className="w-64 bg-[#15171B] border border-white/[0.08] rounded-full pl-9 pr-4 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-aurora-purple/50 transition-all"
+              />
+            </div>
           </div>
-          <Button
-            variant="default"
-            className="h-10 rounded-lg bg-emerald-500 px-6 text-sm font-medium text-slate-950 shadow-sm hover:bg-emerald-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-          >
-            New Project
-          </Button>
+
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-[10px] font-mono text-gray-500 uppercase">
+              <div className="w-2 h-2 rounded-full bg-green-500 shadow-glow shadow-green-500/50" />
+              <span>Node Active</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* 2. Main Workspace */}
+      <main className="flex-1 max-w-7xl mx-auto w-full p-6 md:p-10 space-y-10 relative">
+
+        {/* Page Header Area */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-aurora-cyan text-[10px] uppercase font-bold tracking-[0.2em] font-mono mb-2">
+              <Activity className="w-3 h-3" />
+              Architectural Registry
+            </div>
+            <h1 className="text-4xl font-bold text-white tracking-tight">System Index</h1>
+            <p className="text-gray-500 max-w-lg">
+              Manage your system knowledge graphs and structural analysis projects from a centralized intelligence hub.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setShowCLIModal(true)}
+              className="border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05] text-gray-400 rounded-xl group"
+            >
+              <Terminal className="w-4 h-4 mr-2 group-hover:text-aurora-purple transition-colors" />
+              CLI Access
+            </Button>
+            <Button onClick={() => setShowCreateForm(true)} className="bg-aurora-purple hover:bg-aurora-purple/80 text-white shadow-glow rounded-xl px-6 font-bold">
+              <Plus className="mr-2 h-4 w-4" /> New Repository
+            </Button>
+          </div>
         </div>
 
-        <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-6 mb-8">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <Input
-              type="text"
-              placeholder="Project Name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-              className="flex-1 bg-slate-800 border-slate-700 text-slate-50 placeholder:text-slate-400 focus:border-emerald-500"
-            />
-            <Input
-              type="url"
-              placeholder="Repository URL"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
-              required
-              className="flex-1 bg-slate-800 border-slate-700 text-slate-50 placeholder:text-slate-400 focus:border-emerald-500"
-            />
-            <Button type="submit" disabled={submitting} onClick={handleSubmit} className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-6">
-              {submitting ? 'Creating...' : 'Create Project'}
-            </Button>
-          </div>
-          {success && (
-            <div className="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-lg">
-              <p className="text-emerald-400 text-sm">{success}</p>
-            </div>
-          )}
-          {error && (
-            <div className="mt-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-lg">
-              <p className="text-rose-400 text-sm">{error}</p>
-            </div>
-          )}
-        </Card>
+        {/* 3. High-End Projects Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {loading.projects ? (
+            [1, 2, 3].map(i => (
+              <div key={i} className="h-48 rounded-2xl border border-white/[0.05] bg-white/[0.02] animate-pulse" />
+            ))
+          ) : projects.length === 0 ? (
+            <div className="col-span-full space-y-6">
+              {/* Welcome Card */}
+              <div className="p-8 rounded-3xl bg-gradient-to-br from-aurora-purple/10 via-transparent to-aurora-cyan/10 border border-white/[0.1] relative overflow-hidden">
+                <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGRlZnM+PHBhdHRlcm4gaWQ9ImdyaWQiIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCIgcGF0dGVyblVuaXRzPSJ1c2VyU3BhY2VPblVzZSI+PHBhdGggZD0iTSAwIDEwIEwgNDAgMTAgTSAxMCAwIEwgMTAgNDAgTSAwIDIwIEwgNDAgMjAgTSAyMCAwIEwgMjAgNDAgTSAwIDMwIEwgNDAgMzAgTSAzMCAwIEwgMzAgNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS1vcGFjaXR5PSIwLjAzIiBzdHJva2Utd2lkdGg9IjEiLz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZ3JpZCkiLz48L3N2Zz4=')] opacity-40" />
+                <div className="relative z-10">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-12 h-12 rounded-xl bg-aurora-purple/20 border border-aurora-purple/30 flex items-center justify-center">
+                      <Zap className="w-6 h-6 text-aurora-purple" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-white">Welcome to ArchIntel</h2>
+                      <p className="text-sm text-gray-400">Structural Intelligence Platform</p>
+                    </div>
+                  </div>
+                  <p className="text-gray-300 leading-relaxed max-w-2xl">
+                    Transform your codebase into actionable intelligence. Start by registering a repository to unlock AST-powered documentation, dependency graphs, and AI-driven architectural insights.
+                  </p>
+                </div>
+              </div>
 
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[...Array(6)].map((_, i) => (
-              <Card key={i} className="flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="h-4 bg-slate-700 rounded animate-pulse w-3/4"></div>
-                  <div className="h-5 bg-slate-700 rounded animate-pulse w-16"></div>
+              {/* Getting Started Steps */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-6 rounded-2xl bg-[#0A0C10] border border-white/[0.08] hover:border-aurora-purple/30 transition-all group">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-aurora-purple/10 border border-aurora-purple/20 flex items-center justify-center text-aurora-purple font-bold text-sm">
+                      1
+                    </div>
+                    <h3 className="font-bold text-white">Register Repository</h3>
+                  </div>
+                  <p className="text-sm text-gray-400 leading-relaxed mb-4">
+                    Click <span className="text-aurora-purple font-semibold">"New Repository"</span> above to add a GitHub URL. We'll clone and analyze the structure.
+                  </p>
+                  <Button
+                    onClick={() => setShowCreateForm(true)}
+                    className="w-full bg-aurora-purple/10 hover:bg-aurora-purple/20 text-aurora-purple border border-aurora-purple/30 rounded-xl"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> Add Repository
+                  </Button>
                 </div>
-                <div className="h-3 bg-slate-700 rounded animate-pulse w-full mb-1"></div>
-                <div className="h-3 bg-slate-700 rounded animate-pulse w-2/3"></div>
-                <div className="flex items-center gap-3 mt-2">
-                  <div className="h-3 bg-slate-700 rounded animate-pulse w-20"></div>
-                  <div className="h-1 w-1 bg-slate-600 rounded-full"></div>
-                  <div className="h-3 bg-slate-700 rounded animate-pulse w-24"></div>
+
+                <div className="p-6 rounded-2xl bg-[#0A0C10] border border-white/[0.08] opacity-60">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-gray-700/20 border border-gray-700/30 flex items-center justify-center text-gray-500 font-bold text-sm">
+                      2
+                    </div>
+                    <h3 className="font-bold text-gray-400">Explore Intelligence</h3>
+                  </div>
+                  <p className="text-sm text-gray-500 leading-relaxed">
+                    Once analyzed, click <span className="font-semibold">"Explorer"</span> to view documentation, dependency graphs, and architectural insights.
+                  </p>
                 </div>
-              </Card>
-            ))}
-          </div>
-        ) : projects.length === 0 ? (
-          <Card className="bg-slate-900/60 backdrop-blur-sm border-slate-800/50 p-12 text-center">
-            <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
-              <span className="text-2xl">📁</span>
+
+                <div className="p-6 rounded-2xl bg-[#0A0C10] border border-white/[0.08] opacity-60">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-gray-700/20 border border-gray-700/30 flex items-center justify-center text-gray-500 font-bold text-sm">
+                      3
+                    </div>
+                    <h3 className="font-bold text-gray-400">Query Architecture</h3>
+                  </div>
+                  <p className="text-sm text-gray-500 leading-relaxed">
+                    Press <span className="font-mono font-semibold">Cmd+K</span> in Explorer to ask questions like "Where is authentication?" or "List all APIs".
+                  </p>
+                </div>
+              </div>
             </div>
-            <h3 className="text-lg font-semibold text-slate-50 mb-2">No projects yet</h3>
-            <p className="text-slate-400 mb-6 max-w-md mx-auto">
-              Get started by creating your first project. Connect a Git repository to generate AI-powered documentation.
-            </p>
-            <Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-950">
-              Create Your First Project
-            </Button>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {projects.map((p) => (
-              <Card key={p.id} className="group relative flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-5 py-4 shadow-sm shadow-black/40 transition-all duration-200 ease-out hover:-translate-y-[2px] hover:border-slate-700 hover:bg-slate-900 hover:shadow-lg hover:shadow-black/60 cursor-pointer">
-                <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base font-semibold text-slate-50 truncate mb-1">
-                      {p.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 truncate">{p.repo_url}</p>
+          ) : (
+            projects
+              .filter(p =>
+                p.name.toLowerCase().includes(filter.toLowerCase()) ||
+                p.repo_url.toLowerCase().includes(filter.toLowerCase())
+              )
+              .map((project) => (
+                <div
+                  key={project.id}
+                  onClick={() => router.push(`/docs?project=${project.id}`)}
+                  className="group relative bg-[#0A0C10] border border-white/[0.08] rounded-2xl p-6 hover:border-aurora-purple/50 transition-all cursor-pointer overflow-hidden shadow-sm"
+                >
+                  {/* Subtle Glow Background */}
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-aurora-purple/5 blur-3xl -translate-y-1/2 translate-x-1/2 group-hover:bg-aurora-purple/10 transition-colors" />
+
+                  <div className="relative z-10 space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div className="w-10 h-10 rounded-lg bg-[#15171B] border border-white/[0.05] flex items-center justify-center group-hover:border-aurora-purple/30 transition-colors">
+                        <GitBranch className="w-5 h-5 text-gray-400 group-hover:text-aurora-purple transition-colors" />
+                      </div>
+                      <div className={cn(
+                        "px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5",
+                        project.status === 'active' ? "bg-green-500/10 text-green-500 border border-green-500/20" :
+                          project.status === 'analyzing' ? "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20" :
+                            "bg-white/[0.05] text-gray-500 border border-white/[0.05]"
+                      )}>
+                        <div className={cn("w-1.5 h-1.5 rounded-full", project.status === 'active' ? "bg-green-500" : "bg-yellow-500")} />
+                        {project.status || 'Ready'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-bold text-white group-hover:text-aurora-cyan transition-colors truncate">
+                        {project.name}
+                      </h3>
+                      <p className="text-xs text-gray-500 font-mono mt-1 opacity-60 truncate">
+                        {project.repo_url.replace('https://github.com/', '')}
+                      </p>
+                    </div>
+
+                    <div className="pt-4 flex items-center justify-between border-t border-white/[0.03]">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase text-gray-600 font-bold tracking-tight">Last Analysis</span>
+                        <span className="text-xs text-gray-400 font-mono">
+                          {project.last_analyzed ? new Date(project.last_analyzed).toLocaleDateString() : 'Pending'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 relative z-20">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); handleSync(project.id); }}
+                          className="h-8 w-8 p-0 text-gray-500 hover:text-white"
+                          title="Sync Analysis"
+                        >
+                          <RefreshCw className={cn("w-3.5 h-3.5", syncingIds.has(project.id) && "animate-spin")} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => { e.stopPropagation(); deleteProject(project.id); }}
+                          className="h-8 w-8 p-0 text-gray-500 hover:text-red-500"
+                          title="Terminate Node"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 group/btn text-gray-500 hover:text-aurora-cyan text-[10px] gap-2 px-2">
+                          Explorer <ArrowRight className="w-3 h-3 transition-transform group-hover/btn:translate-x-1" />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
-                  <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-300 shrink-0">
-                    Active
-                  </Badge>
                 </div>
-                <p className="text-sm text-slate-400 leading-relaxed">
-                  Intelligent documentation with real-time code analysis and team collaboration insights.
-                </p>
-                <div className="flex items-center justify-between text-xs text-slate-500 mt-auto">
-                  <div className="flex items-center gap-3">
-                    <span>Last updated 2h ago</span>
-                    <span className="h-1 w-1 rounded-full bg-slate-600"></span>
-                    <span>12 modules • 145 files</span>
-                  </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-rose-400 hover:text-rose-300 hover:bg-rose-500/10"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(p.id);
-                      }}
-                      disabled={deletingProject === p.id.toString()}
-                    >
-                      {deletingProject === p.id.toString() ? '...' : '🗑️'}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-slate-400 hover:text-slate-50">
-                      View →
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            ))}
+              ))
+          )}
+        </div>
+
+        {/* 4. Stats Footer Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-8 rounded-3xl bg-[#0A0C10] border border-white/[0.05] shadow-inner relative overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-r from-aurora-purple/5 via-transparent to-aurora-cyan/5 opacity-50" />
+
+          <div className="relative z-10 flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-gray-600 tracking-widest mb-1">Total Nodes</span>
+            <span className="text-3xl font-bold text-white font-mono">{projects.length}</span>
           </div>
-        )}
-      </div>
-    </main>
+          <div className="relative z-10 flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-gray-600 tracking-widest mb-1">Active Sync</span>
+            <span className="text-3xl font-bold text-aurora-cyan font-mono">{projects.filter(p => p.status === 'active' || p.status === 'ready').length}</span>
+          </div>
+          <div className="relative z-10 flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-gray-600 tracking-widest mb-1">Languages</span>
+            <span className="text-3xl font-bold text-white font-mono">
+              {(() => {
+                const allLanguages = new Set();
+                projects.forEach(p => {
+                  if (p.languages) p.languages.forEach(lang => allLanguages.add(lang));
+                });
+                return allLanguages.size || 0;
+              })()}
+            </span>
+          </div>
+          <div className="relative z-10 flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-gray-600 tracking-widest mb-1">Up-Time</span>
+            <span className="text-3xl font-bold text-aurora-pink font-mono">
+              {projects.length > 0 ? ((projects.filter(p => p.status !== 'error').length / projects.length) * 100).toFixed(1) : '100.0'}%
+            </span>
+          </div>
+        </div>
+      </main>
+
+      {/* Form Modal (Aurora Dialog Style) */}
+      {showCreateForm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="w-full max-w-lg bg-[#0A0C10] border border-aurora-border rounded-2xl shadow-2xl p-8 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-aurora-purple via-aurora-cyan to-aurora-pink" />
+
+            <button
+              onClick={() => setShowCreateForm(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+            >
+              <Plus className="w-6 h-6 rotate-45" />
+            </button>
+
+            <div className="space-y-2 mb-8">
+              <h2 className="text-2xl font-bold text-white tracking-tight">Register Node</h2>
+              <p className="text-sm text-gray-500">Inject a repository into the ArchIntel structural engine.</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-4">
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">Project Identifier</label>
+                  <input
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] px-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
+                    placeholder="e.g. CORE-SYSTEM-V2"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">Repository Source (GIT)</label>
+                  <div className="relative">
+                    <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+                    <input
+                      required
+                      type="url"
+                      value={repoUrl}
+                      onChange={(e) => setRepoUrl(e.target.value)}
+                      className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
+                      placeholder="https://github.com/organization/repo"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 pt-4">
+                <Button type="submit" disabled={loading.submission} className="h-12 bg-aurora-purple hover:bg-aurora-purple/80 text-white font-bold rounded-xl shadow-glow">
+                  {loading.submission ? (
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  ) : (
+                    <Zap className="mr-2 h-4 w-4 fill-current" />
+                  )}
+                  Initialize Core Analysis
+                </Button>
+                <div className="flex items-center justify-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
+                  <AlertCircle className="w-3 h-3 text-aurora-cyan" />
+                  Stateless secure analysis active
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CLI Access Modal */}
+      {showCLIModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowCLIModal(false)} />
+          <div className="relative w-full max-w-lg bg-[#0A0C10] border border-white/[0.1] rounded-2xl shadow-2xl p-8">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-aurora-purple/10 border border-aurora-purple/20">
+                  <Terminal className="w-5 h-5 text-aurora-purple" />
+                </div>
+                <h3 className="text-xl font-bold text-white">CLI Configuration</h3>
+              </div>
+              <button onClick={() => setShowCLIModal(false)} className="text-gray-500 hover:text-white transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Base Command</span>
+                <div className="p-4 rounded-xl bg-black border border-white/[0.05] font-mono text-sm text-aurora-cyan">
+                  python backend/cli.py --help
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Global Operations</span>
+                {[
+                  { cmd: 'list', desc: 'List all architectural nodes' },
+                  { cmd: 'analyze <url>', desc: 'Initialize node analysis' },
+                  { cmd: 'query <id> <text>', desc: 'Interactive arch intelligence' }
+                ].map(item => (
+                  <div key={item.cmd} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                    <code className="text-xs text-aurora-purple">cli.py {item.cmd}</code>
+                    <span className="text-[10px] text-gray-500 font-mono">{item.desc}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[10px] text-gray-600 italic">
+                Ensure the backend server is running at http://localhost:8000 before executing CLI commands.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

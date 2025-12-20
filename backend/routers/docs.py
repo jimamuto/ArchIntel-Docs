@@ -462,30 +462,78 @@ async def download_system_documentation(
         if not code_files:
             raise HTTPException(status_code=404, detail="No code files found in the repository")
 
-        # Generate comprehensive system documentation
+        # Prepare structural analysis
+        from services.ast_parser import parse_code_structure
+        
+        system_structure = []
+        full_context = ""
+        
+        for file in code_files:
+            path = file['path']
+            lang = file['language']
+            content = file_contents.get(path, "")
+            
+            # Parse structure
+            structure = parse_code_structure(content, lang)
+            
+            file_summary = f"File: {path}\nLanguage: {lang}\n"
+            if "classes" in structure and structure["classes"]:
+                file_summary += "Classes:\n" + "\n".join([f"- {c['name']}" for c in structure["classes"]]) + "\n"
+            if "functions" in structure and structure["functions"]:
+                file_summary += "Functions:\n" + "\n".join([f"- {f['name']}" for f in structure["functions"]]) + "\n"
+            if "imports" in structure and structure["imports"]:
+                file_summary += "Dependencies: " + ", ".join(structure["imports"][:10]) + "\n"
+                
+            system_structure.append(file_summary)
+            
+            # Add snippet for context (limited)
+            full_context += f"\n--- {path} ---\n{content[:1500]}\n"
+
+        # Generate comprehensive system documentation with System Design focus
         system_prompt = f"""
-Generate comprehensive documentation for the entire {project['name']} project. Analyze the codebase structure and create detailed documentation that covers:
+I am an expert System Architect. I need you to reverse-engineer a complete **System Design Document** for the following project.
 
-1. **System Overview**: What this project does, its main purpose and architecture
-2. **Technology Stack**: Languages, frameworks, and tools used
-3. **Project Structure**: Directory organization and module breakdown
-4. **Key Components**: Main files, classes, functions, and their purposes
-5. **Architecture**: How different parts of the system interact
-6. **Dependencies**: External libraries and services used
-7. **Usage**: How to run, configure, and use the system
+**Project Name**: {project['name']}
 
-Codebase Statistics:
-- Total files: {len(code_files)}
-- Languages: {', '.join([f'{lang}: {count}' for lang, count in language_stats.items()])}
-- Main directories: {', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}
+**Analysis Data**:
+{chr(10).join(system_structure)}
 
-Key Files Summary:
-{chr(10).join([f"- {f['path']} ({f['language']}, {f['lines']} lines)" for f in code_files[:10]])}
+**Source Code Samples**:
+{full_context[:12000]} 
 
-Sample code from key files:
-{chr(10).join([f"--- {path} ---{chr(10)}{content[:500]}..." for path, content in list(file_contents.items())[:3]])}
+**Instructions**:
+Generate a professional System Design Document (SDD) suitable for senior engineering review. Do not just summarize the code; analyze the *intent*, *architectural patterns*, and *trade-offs*.
 
-Provide detailed, professional documentation in markdown format.
+**Required Structures**:
+
+# 1. Executive Summary
+- High-level purpose of the system.
+- Key problems it solves.
+
+# 2. Architecture Overview
+- **Pattern**: (e.g., MVC, Microservices, Monolithic).
+- **Architecture Diagram Description**: Textual description of components and data flow.
+- **Core Modules**: Breakdown of major sub-systems.
+
+# 3. Component Design
+For each key component:
+- **Responsibilities**: What does it own?
+- **Interfaces**: Key public methods/API.
+- **Dependencies**: Downstream services.
+
+# 4. Data Design
+- **Entities**: Key data models inferred from classes.
+- **Storage Strategy**: How data is persisted.
+
+# 5. Security & Scalability
+- **Security Considerations**: (Input validation, Auth, Secrets).
+- **Scalability Analysis**: Horizontal/Vertical scaling potential.
+
+# 6. Implementation Guide
+- **Prerequisites**: Inferred from imports.
+- **Entry Points**: How execution flows.
+
+Provide this in clean, hierarchical Markdown.
 """
 
         system_doc = generate_doc_with_groq(system_prompt)
@@ -710,64 +758,193 @@ def run_stateless_test_suite(project: dict) -> dict:
 
 def generate_file_documentation(file_path: str, language: str, project_id: str) -> str:
     """Generate documentation for a specific file using AI analysis"""
-
+    temp_dir = None
     try:
         # Get project information
         project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
         project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+        
+        # Clone repo to temp dir to read content safely
+        repo_url = project["repo_url"]
+        temp_dir = tempfile.mkdtemp()
+        repo_dir = os.path.join(temp_dir, "repo")
+        
+        # Clone
+        subprocess.run(["git", "clone", "--depth", "1", repo_url, repo_dir], capture_output=True, check=True)
+        
+        # Read file
+        abs_path = os.path.join(repo_dir, file_path)
+        if not os.path.exists(abs_path):
+             return f"Error: File not found in repository at {file_path}"
+             
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+            
+        # Parse structure for better context
+        from services.ast_parser import parse_code_structure
+        structure = parse_code_structure(content, language)
+        
+        structure_summary = ""
+        if "classes" in structure:
+            structure_summary += f"\nClasses: {', '.join([c['name'] for c in structure['classes']])}"
+        if "functions" in structure:
+            structure_summary += f"\nFunctions: {', '.join([f['name'] for f in structure['functions']])}"
 
-        # Basic file analysis
-        file_name = os.path.basename(file_path)
-        file_extension = os.path.splitext(file_name)[1]
+        # Generate Real Documentation
+        prompt = f"""
+Generate comprehensive technical documentation for the following {language} file: `{file_path}`.
 
-        docs = f"""# File Documentation: {file_name}
+**Code Context**:
+{structure_summary}
 
-## Overview
-- **File Path**: `{file_path}`
-- **Language**: {language.upper()}
-- **Project**: {project['name']}
+**Source Code**:
+{content}
 
-## File Analysis
+**Instructions**:
+Create a detailed markdown documentation file including:
+1. **Module Overview**: High-level purpose.
+2. **Classes & Functions**: Detailed breakdown of components.
+3. **Data Flow**: Inputs, outputs, and side effects.
+4. **Dependencies**: What does this file import/require?
+5. **Usage Examples**: How to use the code in this file.
 
-### Language Detection
-This file has been identified as **{language}** code.
-
-### File Structure
-- **Extension**: `{file_extension}`
-- **Location**: `{os.path.dirname(file_path)}`
-
-## Code Quality Assessment
-
-### Test Results
-✅ **File Recognition**: Successfully identified and cataloged
-✅ **Language Detection**: Correctly classified as {language}
-✅ **Metadata Indexing**: File metadata indexed in system (content not stored for security)
-
-### Recommendations
-1. Review code for {language}-specific best practices
-2. Ensure proper error handling patterns
-3. Consider adding comprehensive unit tests
-4. Validate against {language} coding standards
-
-## Integration Status
-This file is fully integrated into the ArchIntel Docs system and ready for:
-- Automated documentation generation
-- Code analysis and review
-- Test coverage assessment
-- Dependency mapping
-
----
-*Generated by ArchIntel Docs - AI-powered code analysis system*
+Output strictly markdown.
 """
-
-        return docs
+        return generate_doc_with_groq(prompt)
 
     except Exception as e:
-        return f"""# Error Generating Documentation
+        return f"Error generating documentation: {str(e)}"
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except:
+                pass
+@router.get("/{project_id}/graph")
+async def get_project_graph(project_id: str, repo_path: str = Query(..., description="Local path to the repo")):
+    """
+    Generate a dependency graph for the project.
+    Nodes: Files/Modules
+    Edges: Imports/Dependencies
+    """
+    try:
+        # Handle repo path (copied from system doc)
+        if repo_path == ".":
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            repo_path_full = os.path.dirname(backend_dir)
+        elif repo_path.startswith("repos/"):
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            project_root = os.path.dirname(backend_dir)
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
 
-Unable to generate documentation for file: {file_path}
+        if not os.path.exists(repo_path_full):
+            raise HTTPException(status_code=404, detail="Repo not found locally")
 
-**Error**: {str(e)}
+        nodes = []
+        edges = []
+        file_map = {} # path -> id
 
-Please ensure the file exists and is properly indexed in the system.
+        from services.ast_parser import parse_code_structure
+
+        count = 0
+        for root, dirs, files in os.walk(repo_path_full):
+            if count >= 40: break # Limit for MVP performance
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'venv', '__pycache__', '.next', 'dist']]
+            for file in files:
+                if count >= 40: break
+                if file.endswith(('.py', '.js', '.jsx', '.ts', '.tsx')):
+                    rel_path = os.path.relpath(os.path.join(root, file), repo_path_full)
+                    node_id = f"node_{count}"
+                    nodes.append({"id": node_id, "label": file, "type": "file", "path": rel_path})
+                    file_map[rel_path] = node_id
+                    count += 1
+
+        # Second pass for edges
+        for node in nodes:
+            try:
+                abs_path = os.path.join(repo_path_full, node["path"])
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+                
+                lang = "python" if node["path"].endswith(".py") else "javascript"
+                structure = parse_code_structure(content, lang)
+                
+                for imp in structure.get("imports", []):
+                    # Simple heuristic mapping for internal imports
+                    for target_path, target_id in file_map.items():
+                        # Check if import name exists in target path (simplified)
+                        target_name = os.path.splitext(os.path.basename(target_path))[0]
+                        if target_name in imp:
+                            edges.append({"source": node["id"], "target": target_id})
+                            break
+            except:
+                continue
+
+        return {"nodes": nodes, "edges": edges}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from pydantic import BaseModel
+class QueryRequest(BaseModel):
+    query: str
+    repo_path: str
+
+@router.post("/{project_id}/query")
+async def query_architecture(project_id: str, request: QueryRequest):
+    """
+    Architecture Search: Ask questions about the codebase.
+    """
+    try:
+        # 1. Get Project context (simulated or parsed from system doc logic)
+        # For MVP, we'll fetch the first 10 files structure as context
+        
+        repo_path = request.repo_path
+        if repo_path == ".":
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            repo_path_full = os.path.dirname(backend_dir)
+        elif repo_path.startswith("repos/"):
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            project_root = os.path.dirname(backend_dir)
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
+
+        from services.ast_parser import parse_code_structure
+        
+        context_str = ""
+        count = 0
+        for root, dirs, files in os.walk(repo_path_full):
+            if count > 15: break
+            dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', 'venv', '__pycache__']]
+            for file in files:
+                if file.endswith(('.py', '.js', '.ts')):
+                    rel_path = os.path.relpath(os.path.join(root, file), repo_path_full)
+                    with open(os.path.join(root, file), "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                    
+                    lang = "python" if rel_path.endswith(".py") else "javascript"
+                    struct = parse_code_structure(content, lang)
+                    context_str += f"\nFile: {rel_path}\nClasses: {struct.get('classes', [])}\nFunctions: {struct.get('functions', [])}\n"
+                    count += 1
+
+        prompt = f"""
+You are an expert software engineer assistant for ArchIntel.
+User Question: {request.query}
+
+Codebase Context (Structural):
+{context_str}
+
+Instruction:
+Answer the user's question accurately based on the provided structural context. If you don't know, suggest where they might look.
+Output strictly markdown.
 """
+        response = generate_doc_with_groq(prompt)
+        return {"response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

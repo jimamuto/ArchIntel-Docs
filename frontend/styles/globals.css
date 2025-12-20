@@ -4,25 +4,44 @@
 
 @layer base {
   :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    /* Aurora Theme HSL Conversions */
+    --background: 240 10% 4%;
+    /* #060608 */
+    --foreground: 0 0% 100%;
+    /* #FFFFFF */
+
+    --card: 240 10% 6%;
+    /* #0F0F13 */
+    --card-foreground: 0 0% 100%;
+
+    --popover: 240 10% 6%;
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 270 90% 70%;
+    /* #B26EF7 - Aurora Purple */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 11%;
+    /* #1A1A20 */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 240 10% 9%;
+    /* #141419 */
+    --muted-foreground: 220 8% 57%;
+    /* #8A8F98 */
+
+    --accent: 240 10% 11%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 6% 15%;
+    /* #232329 */
+    --input: 240 10% 11%;
+    /* #1A1A20 */
+    --ring: 270 90% 70%;
+    /* #B26EF7 */
     --radius: 0.5rem;
   }
 }
@@ -31,7 +50,67 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
+
+  ::selection {
+    @apply bg-aurora-purple/30 text-white;
+  }
+}
+
+@layer utilities {
+  .aurora-glass {
+    @apply bg-[#0F0F13]/60 backdrop-blur-md border border-white/[0.08];
+  }
+
+  .aurora-gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[#FF71D4] via-[#B26EF7] to-[#5DE6FA];
+  }
+
+  .aurora-card {
+    @apply bg-aurora-card border border-aurora-border rounded-lg shadow-lg;
+  }
+
+  .text-massive {
+    @apply text-5xl md:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.9] text-white;
+  }
+
+  .bento-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: minmax(200px, auto);
+    gap: 1.5rem;
+  }
+
+  .bento-card {
+    @apply relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0d1117]/80 backdrop-blur-xl p-8 transition-all duration-500 hover:border-white/20 hover:bg-[#161b22]/90;
+  }
+
+  .github-glow {
+    position: absolute;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(178, 110, 247, 0.15) 0%, transparent 70%);
+    border-radius: 50%;
+    filter: blur(100px);
+    pointer-events: none;
+    z-index: -1;
   }
 }
