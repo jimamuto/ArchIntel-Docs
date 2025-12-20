@@ -12,9 +12,8 @@ TESTING LLM PROVIDERS FOR ARCHINTEL
 A REST (Representational State of Resource) API is an architectural style for designing networked applications that allows different systems to communicate with each other over the internet by exchanging data in a standardized format, typically using HTTP methods such as GET, POST, PUT, and DELETE.
 
 3. Testing Gemini (gemini-1.5-flash):
-------------------------------------------------------------
-For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404
-
+----------------------------------------------------------------------
+✅ SUCCESS:
 # ArchIntel Analysis
 
 Automated structural report generated for the current context.

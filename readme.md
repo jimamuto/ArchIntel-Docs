@@ -159,6 +159,13 @@ Focus:
 - Initial FastAPI endpoints for projects, structure, and docs.  
 - Basic docs explorer UI.
 
+**Deferred / TODO:**
+
+- [ ] Persist parsed symbols (files, functions, classes) to `symbols` table.
+- [ ] Persist relationships/dependencies to database.
+- [ ] Persist generated documentation to `docs` table (currently stateless/on-demand).
+- [ ] Implement Sphinx with Mermaid for visual documentation generation
+
 ### Milestone 2 – History-Aware Documentation
 
 Outcome:

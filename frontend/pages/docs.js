@@ -22,13 +22,17 @@ import {
   Network,
   X,
   ArrowUpRight,
-  ArrowDownLeft
+  ArrowDownLeft,
+  Edit2,
+  Save,
+  Ban
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Link from 'next/link';
 import { useToast } from '../lib/toast';
 import Head from 'next/head';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
 
 // --- Background Component ---
 const BlueprintBackground = () => (
@@ -66,7 +70,10 @@ export default function Docs() {
   const { success: showToast, error: showError } = useToast();
   const [error, setError] = useState(null);
   const [showCode, setShowCode] = useState(false);
+
   const [expandedFolders, setExpandedFolders] = useState(new Set());
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
 
   // MVP Features State
   const [showSearch, setShowSearch] = useState(false);
@@ -145,6 +152,31 @@ export default function Docs() {
     } catch (err) {
       console.error(err);
       setSystemDoc('# Error\nFailed to load system documentation.');
+    } finally {
+      setLoading(prev => ({ ...prev, content: false }));
+    }
+  }
+
+  async function handleSave() {
+    if (!selectedProject || !selectedFile) return;
+
+    setLoading(prev => ({ ...prev, content: true }));
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: selectedFile, content: editContent })
+      });
+
+      if (res.ok) {
+        showToast("Documentation saved successfully.");
+        setDocs(editContent);
+        setIsEditing(false);
+      } else {
+        showError("Failed to save documentation.");
+      }
+    } catch (err) {
+      showError("Error saving documentation.");
     } finally {
       setLoading(prev => ({ ...prev, content: false }));
     }
@@ -234,6 +266,8 @@ export default function Docs() {
         );
         const docText = docRes.ok ? await docRes.text() : '// Documentation generation in progress...';
         setDocs(docText);
+        setEditContent(docText);
+        setIsEditing(false);
 
         const codeRes = await fetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/file/code?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
@@ -516,7 +550,7 @@ export default function Docs() {
               {/* Workspace Tabs */}
               <div className="h-11 border-b border-aurora-border flex items-end px-4 gap-1 bg-[#0A0C10]/50 backdrop-blur-sm z-20">
                 <button
-                  onClick={() => { setShowCode(false); setShowSystemDoc(false); }}
+                  onClick={() => { setShowCode(false); setShowSystemDoc(false); setIsEditing(false); }}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 text-xs font-medium border-t border-l border-r rounded-t-lg transition-all relative top-[1px]",
                     !showCode && !showSystemDoc
@@ -597,14 +631,30 @@ export default function Docs() {
                       {viewMode === 'doc' ? (
                         <div className="bg-[#0A0C10]/50 backdrop-blur-sm border border-aurora-border rounded-xl p-8 shadow-sm">
                           {systemDoc ? (
-                            systemDoc.split('\n').map((line, i) => {
-                              if (line.startsWith('# ')) return <h1 key={i} className="text-3xl mb-6 text-white pb-4 border-b border-white/[0.1]">{line.substring(2)}</h1>;
-                              if (line.startsWith('## ')) return <h2 key={i} className="text-xl mt-10 mb-4 text-aurora-cyan font-mono flex items-center gap-2"><span className="text-gray-600">##</span> {line.substring(3)}</h2>;
-                              if (line.startsWith('### ')) return <h3 key={i} className="text-lg font-semibold mt-8 mb-2 text-aurora-purple">{line.substring(4)}</h3>;
-                              if (line.startsWith('- ')) return <li key={i} className="ml-4 text-gray-300 list-disc marker:text-gray-600 mb-2 pl-1">{line.substring(2)}</li>;
-                              if (!line.trim()) return <div key={i} className="h-4" />;
-                              return <p key={i} className="leading-7 mb-4">{line}</p>;
-                            })
+                            <div className="prose prose-invert prose-p:text-gray-300 prose-headings:font-bold prose-pre:bg-[#0A0C10] prose-pre:border prose-pre:border-aurora-border max-w-none">
+                              <ReactMarkdown
+                                components={{
+                                  h1: ({ node, ...props }) => <h1 className="text-3xl font-bold text-white mb-6 border-b border-white/[0.1] pb-4" {...props} />,
+                                  h2: ({ node, ...props }) => <h2 className="text-xl mt-12 mb-6 text-aurora-cyan font-mono flex items-center gap-2" {...props} />,
+                                  h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-8 mb-3 text-aurora-purple" {...props} />,
+                                  p: ({ node, ...props }) => <p className="leading-7 mb-4 text-gray-300/90" {...props} />,
+                                  ul: ({ node, ...props }) => <ul className="list-none space-y-2 ml-4 mb-4" {...props} />,
+                                  li: ({ node, ...props }) => (
+                                    <div className="flex gap-3 items-start">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-aurora-cyan mt-2.5 flex-shrink-0" />
+                                      <li className="leading-relaxed text-gray-300" {...props} />
+                                    </div>
+                                  ),
+                                  code: ({ node, inline, ...props }) => (
+                                    inline
+                                      ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props} />
+                                      : <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto"><code {...props} /></pre>
+                                  ),
+                                }}
+                              >
+                                {systemDoc}
+                              </ReactMarkdown>
+                            </div>
                           ) : (
                             <div className="text-center py-20 text-gray-500 italic">Analysis pending. Click system architecture to generate.</div>
                           )}
@@ -671,118 +721,68 @@ export default function Docs() {
                     // --- Documentation View ---
                     <article className="prose prose-invert prose-p:text-gray-300 prose-headings:font-bold prose-pre:bg-[#0A0C10] prose-pre:border prose-pre:border-aurora-border max-w-none">
                       {/* Header Card */}
-                      <div className="mb-10 pb-6 border-b border-white/[0.1]">
+                      <div className="mb-10 pb-6 border-b border-white/[0.1] relative">
                         <div className="flex items-center gap-3 mb-2 text-aurora-cyan">
                           <FileText className="w-5 h-5" />
                           <span className="text-xs font-mono uppercase tracking-widest font-bold">Generated Documentation</span>
                         </div>
                         <h1 className="text-4xl font-bold text-white mb-2">{selectedFile?.split('/').pop()}</h1>
                         <p className="text-gray-500 text-lg">Automated analysis of {selectedFile}</p>
+                        <div className="absolute right-0 top-0 flex gap-2">
+                          {isEditing ? (
+                            <>
+                              <Button size="sm" variant="ghost" className="text-gray-400 hover:text-white" onClick={() => { setIsEditing(false); setEditContent(docs); }}>
+                                <Ban className="w-4 h-4 mr-2" /> Cancel
+                              </Button>
+                              <Button size="sm" className="bg-aurora-purple text-white hover:bg-aurora-purple/80" onClick={handleSave}>
+                                <Save className="w-4 h-4 mr-2" /> Save Changes
+                              </Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="ghost" className="text-gray-400 hover:text-white" onClick={() => setIsEditing(true)}>
+                              <Edit2 className="w-4 h-4 mr-2" /> Edit Docs
+                            </Button>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Markdown Content */}
-                      <div className="space-y-3">
-                        {docs?.split('\n').map((line, i) => {
-                          // Skip title (handled in header)
-                          if (line.startsWith('# ')) return null;
-
-                          // Headers
-                          if (line.startsWith('## ')) {
-                            return <h2 key={i} className="text-2xl mt-12 mb-6 text-white font-semibold flex items-center gap-2">
-                              <span className="w-1 h-6 bg-aurora-cyan rounded-full" />
-                              {line.substring(3)}
-                            </h2>;
-                          }
-                          if (line.startsWith('### ')) {
-                            return <h3 key={i} className="text-lg font-bold mt-8 mb-3 text-aurora-purple">
-                              {line.substring(4)}
-                            </h3>;
-                          }
-
-                          // Bullet lists with *
-                          if (line.trim().startsWith('* ')) {
-                            const content = line.trim().substring(2);
-                            // Handle bold text with **
-                            const parts = content.split('**');
-                            return (
-                              <div key={i} className="flex gap-3 ml-4 mb-2 text-gray-300 items-start">
-                                <div className="w-1.5 h-1.5 rounded-full bg-aurora-cyan mt-2 flex-shrink-0" />
-                                <span className="leading-relaxed">
-                                  {parts.map((part, idx) =>
-                                    idx % 2 === 1 ? <strong key={idx} className="text-white font-semibold">{part}</strong> : part
-                                  )}
-                                </span>
-                              </div>
-                            );
-                          }
-
-                          // Bullet lists with + (nested)
-                          if (line.trim().startsWith('+ ')) {
-                            return (
-                              <div key={i} className="flex gap-3 ml-8 mb-2 text-gray-400 items-start">
-                                <div className="w-1 h-1 rounded-full bg-gray-600 mt-2 flex-shrink-0" />
-                                <span className="leading-relaxed text-sm">{line.trim().substring(2)}</span>
-                              </div>
-                            );
-                          }
-
-                          // Bullet lists with -
-                          if (line.trim().startsWith('- ')) {
-                            return (
-                              <div key={i} className="flex gap-3 ml-4 mb-2 text-gray-300 items-start">
-                                <div className="w-1.5 h-1.5 rounded-full bg-gray-600 mt-2 flex-shrink-0" />
-                                <span className="leading-relaxed">{line.trim().substring(2)}</span>
-                              </div>
-                            );
-                          }
-
-                          // Numbered lists
-                          const numberedMatch = line.trim().match(/^(\d+)\.\s+(.+)/);
-                          if (numberedMatch) {
-                            return (
-                              <div key={i} className="flex gap-3 ml-4 mb-2 text-gray-300 items-start">
-                                <span className="text-aurora-purple font-bold text-sm w-6 flex-shrink-0">{numberedMatch[1]}.</span>
-                                <span className="leading-relaxed">{numberedMatch[2]}</span>
-                              </div>
-                            );
-                          }
-
-                          // Code blocks
-                          if (line.startsWith('```')) {
-                            return <div key={i} className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-xs text-gray-400">Code Block</div>;
-                          }
-
-                          // Inline code and bold text in paragraphs
-                          if (line.includes('`') || line.includes('**')) {
-                            let processedLine = line;
-                            const elements = [];
-                            let lastIndex = 0;
-
-                            // Simple parser for inline code and bold
-                            const codeRegex = /`([^`]+)`/g;
-                            const boldRegex = /\*\*([^*]+)\*\*/g;
-
-                            // Replace inline code
-                            processedLine = line.replace(codeRegex, (match, code) => `<code>${code}</code>`);
-                            // Replace bold
-                            processedLine = processedLine.replace(boldRegex, (match, bold) => `<strong>${bold}</strong>`);
-
-                            return (
-                              <p key={i} className="leading-7 mb-4 text-gray-300/90" dangerouslySetInnerHTML={{
-                                __html: processedLine
-                                  .replace(/<code>/g, '<code class="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs">')
-                                  .replace(/<strong>/g, '<strong class="text-white font-semibold">')
-                              }} />
-                            );
-                          }
-
-                          // Empty lines
-                          if (!line.trim()) return <div key={i} className="h-2" />;
-
-                          // Regular paragraphs
-                          return <p key={i} className="leading-7 mb-4 text-gray-300/90">{line}</p>;
-                        })}
-                      </div>
+                      {/* Content Area */}
+                      {isEditing ? (
+                        <div className="w-full">
+                          <textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            className="w-full h-[60vh] bg-[#050608] border border-aurora-border rounded-lg p-6 font-mono text-sm text-gray-300 focus:outline-none focus:border-aurora-purple/50 resize-none font-sans leading-relaxed"
+                            spellCheck={false}
+                          />
+                        </div>
+                      ) : (
+                        /* Markdown Content */
+                        <div className="space-y-3 prose prose-invert prose-p:text-gray-300 prose-headings:font-bold prose-pre:bg-[#0A0C10] prose-pre:border prose-pre:border-aurora-border max-w-none">
+                          <ReactMarkdown
+                            components={{
+                              h1: ({ node, ...props }) => <h1 className="text-4xl font-bold text-white mb-6 border-b border-white/[0.1] pb-4" {...props} />,
+                              h2: ({ node, ...props }) => <h2 className="text-2xl mt-12 mb-6 text-white font-semibold flex items-center gap-2" {...props} />,
+                              h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-8 mb-3 text-aurora-purple" {...props} />,
+                              p: ({ node, ...props }) => <p className="leading-7 mb-4 text-gray-300/90" {...props} />,
+                              ul: ({ node, ...props }) => <ul className="list-none space-y-2 ml-4 mb-4" {...props} />,
+                              li: ({ node, ...props }) => (
+                                <div className="flex gap-3 items-start">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-aurora-cyan mt-2.5 flex-shrink-0" />
+                                  <li className="leading-relaxed text-gray-300" {...props} />
+                                </div>
+                              ),
+                              code: ({ node, inline, ...props }) => (
+                                inline
+                                  ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props} />
+                                  : <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto"><code {...props} /></pre>
+                              ),
+                            }}
+                          >
+                            {docs}
+                          </ReactMarkdown>
+                        </div>
+                      )}
                     </article>
                   )}
                 </div>

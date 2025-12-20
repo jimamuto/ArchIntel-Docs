@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Body
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 import asyncio
 from supabase import create_client, Client
@@ -11,6 +12,7 @@ import base64
 import subprocess
 import tempfile
 import shutil
+from datetime import datetime
 router = APIRouter()
 
 from llm_groq import generate_doc_with_groq
@@ -45,6 +47,44 @@ def get_docs(project_id: str, file: str = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class DocUpdate(BaseModel):
+    path: str
+    content: str
+
+@router.post("/{project_id}/file/doc")
+def update_file_documentation(project_id: str, doc_update: DocUpdate):
+    """
+    Update or create documentation for a specific file.
+    Stores the content in the file_documentation table.
+    """
+    try:
+        # Check if record exists
+        existing = supabase.table("file_documentation").select("id").eq("project_id", project_id).eq("file_path", doc_update.path).execute()
+        existing_data = existing.data if hasattr(existing, 'data') else existing["data"]
+
+        current_time = datetime.now().isoformat()
+
+        if existing_data:
+            # Update
+            response = supabase.table("file_documentation").update({
+                "content": doc_update.content,
+                "updated_at": current_time
+            }).eq("id", existing_data[0]["id"]).execute()
+        else:
+            # Insert
+            response = supabase.table("file_documentation").insert({
+                "project_id": project_id,
+                "file_path": doc_update.path,
+                "content": doc_update.content,
+                "created_at": current_time,
+                "updated_at": current_time
+            }).execute()
+        
+        return {"message": "Documentation saved successfully"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{project_id}/file/doc", response_class=PlainTextResponse)
 async def get_file_llm_documentation(
     project_id: str,
@@ -57,6 +97,16 @@ async def get_file_llm_documentation(
     """
     temp_dir = None
     try:
+        # 1. Check if documentation exists in database first
+        try:
+             db_response = supabase.table("file_documentation").select("content").eq("project_id", project_id).eq("file_path", path).execute()
+             db_data = db_response.data if hasattr(db_response, 'data') else db_response["data"]
+             if db_data and len(db_data) > 0:
+                 return db_data[0]["content"]
+        except Exception:
+            # If DB check fails (e.g. table doesn't exist yet), fall back to generation
+            pass
+
         if not repo_path:
             return "Error: Repository path not provided"
 
@@ -99,7 +149,28 @@ async def get_file_llm_documentation(
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
 
-        prompt = f"""Generate clear, concise, and professional documentation for the following code file. Include a summary, usage, and any important details. Use markdown formatting.\n\n---\n\n{code}\n\n---\n"""
+        prompt = f"""
+As a Senior Software Architect, provide a deep technical analysis and documentation of the following code. 
+
+### Content Requirements:
+1. **Purpose & Scope**: Explain the high-level intent and what problem this specific file solves in the broader system.
+2. **Architectural Role**: How does this file interact with other components? Is it a controller, a utility, a data model, or a router?
+3. **Core Logic & Implementation**: Break down the primary algorithms, data structures, or patterns used. Explain 'the how' behind the code.
+4. **Interfaces & Exports**: Document the key functions, classes, or API endpoints exposed, including their primary responsibilities.
+5. **Technical Constraints & Considerations**: Mention any performance, security, or concurrency details that a developer should be aware of.
+
+### Formatting Rules:
+- Use clean, professional Markdown.
+- Use H2 for major sections and H3 for sub-points.
+- Avoid generic headers like "Summary" or "Usage" unless they are part of a deeper analysis.
+- Do NOT include placeholders or generic "test" text.
+- Be concise but technically dense.
+
+---
+FILE CONTENT:
+{code}
+---
+"""
         doc = generate_doc_with_groq(prompt)
         return doc
     except Exception as e:
@@ -156,7 +227,28 @@ async def download_file_llm_documentation(
         with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
             code = f.read()
 
-        prompt = f"""Generate clear, concise, and professional documentation for the following code file. Include a summary, usage, and any important details. Use markdown formatting.\n\n---\n\n{code}\n\n---\n"""
+        prompt = f"""
+As a Senior Software Architect, provide a deep technical analysis and documentation of the following code. 
+
+### Content Requirements:
+1. **Purpose & Scope**: Explain the high-level intent and what problem this specific file solves in the broader system.
+2. **Architectural Role**: How does this file interact with other components? Is it a controller, a utility, a data model, or a router?
+3. **Core Logic & Implementation**: Break down the primary algorithms, data structures, or patterns used. Explain 'the how' behind the code.
+4. **Interfaces & Exports**: Document the key functions, classes, or API endpoints exposed, including their primary responsibilities.
+5. **Technical Constraints & Considerations**: Mention any performance, security, or concurrency details that a developer should be aware of.
+
+### Formatting Rules:
+- Use clean, professional Markdown.
+- Use H2 for major sections and H3 for sub-points.
+- Avoid generic headers like "Summary" or "Usage" unless they are part of a deeper analysis.
+- Do NOT include placeholders or generic "test" text.
+- Be concise but technically dense.
+
+---
+FILE CONTENT:
+{code}
+---
+"""
         doc = generate_doc_with_groq(prompt)
 
         # Create a temporary file for download
@@ -330,30 +422,37 @@ async def get_system_documentation(
         if not code_files:
             return "Error: No code files found in the repository"
 
-        # Generate comprehensive system documentation
+        # Generate comprehensive system documentation with a System Design focus
         system_prompt = f"""
-Generate comprehensive documentation for the entire {project['name']} project. Analyze the codebase structure and create detailed documentation that covers:
+As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {{project['name']}} project. 
 
-1. **System Overview**: What this project does, its main purpose and architecture
-2. **Technology Stack**: Languages, frameworks, and tools used
-3. **Project Structure**: Directory organization and module breakdown
-4. **Key Components**: Main files, classes, functions, and their purposes
-5. **Architecture**: How different parts of the system interact
-6. **Dependencies**: External libraries and services used
-7. **Usage**: How to run, configure, and use the system
+Generate a professional **System Design Document (SDD)** that analyzes the codebase's intent, patterns, and trade-offs. 
 
-Codebase Statistics:
-- Total files: {len(code_files)}
-- Languages: {', '.join([f'{lang}: {count}' for lang, count in language_stats.items()])}
-- Main directories: {', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}
+### Core Requirements:
+1. **Executive Summary**: High-level purpose and the market/technical problem it solves.
+2. **Architecture Topology**: Define the pattern (e.g., Event-Driven, MVC, Hexagonal). Describe component interaction and data flow hierarchies.
+3. **Core Subsystems**: Breakdown major directories and their specific responsibilities.
+4. **Key Technical Decisions**: Analyze inferred patterns (e.g., Why this stack? How is state handled? How is authentication flow structured?).
+5. **Data Residency & Modeling**: Inferred data entities and storage strategies.
+6. **Security & Performance Profile**: Analysis of sanitization, auth implementation, and potential bottlenecks.
+7. **Maintenance & Scalability**: How the system supports growth (Vertical/Horizontal) and technical debt observations.
 
-Key Files Summary:
-{chr(10).join([f"- {f['path']} ({f['language']}, {f['lines']} lines)" for f in code_files[:10]])}
+### Formatting Rules:
+- Use clean, hierarchical Markdown.
+- Use H2 for major domains and H3 for component-level details.
+- Use bulleted lists for technical debt or potential improvements.
+- Avoid generic lists; focus on architecturally significant details.
 
-Sample code from key files:
-{chr(10).join([f"--- {path} ---{chr(10)}{content[:500]}..." for path, content in list(file_contents.items())[:3]])}
+---
+CODEBASE STATISTICS:
+- Total files: {{len(code_files)}}
+- Stack Breakdown: {{', '.join([f'{{lang}}: {{count}}' for lang, count in language_stats.items()])}}
+- Structural Map: {{', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}}
 
-Provide detailed, professional documentation in markdown format.
+---
+CONTEXTUAL SAMPLES (Sampled from key files):
+{{chr(10).join([f"Path: {{path}}{{chr(10)}}Snippet: {{content[:1000]}}" for path, content in list(file_contents.items())[:5]])}}
+---
 """
 
         system_doc = generate_doc_with_groq(system_prompt)
@@ -491,50 +590,35 @@ async def download_system_documentation(
 
         # Generate comprehensive system documentation with System Design focus
         system_prompt = f"""
-I am an expert System Architect. I need you to reverse-engineer a complete **System Design Document** for the following project.
+As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {{project['name']}} project. 
 
-**Project Name**: {project['name']}
+Generate a professional **System Design Document (SDD)** that analyzes the codebase's intent, patterns, and trade-offs. 
 
-**Analysis Data**:
-{chr(10).join(system_structure)}
+### Core Requirements:
+1. **Executive Summary**: High-level purpose and the market/technical problem it solves.
+2. **Architecture Topology**: Define the pattern (e.g., Event-Driven, MVC, Hexagonal). Describe component interaction and data flow hierarchies.
+3. **Core Subsystems**: Breakdown major directories and their specific responsibilities.
+4. **Key Technical Decisions**: Analyze inferred patterns (e.g., Why this stack? How is state handled? How is authentication flow structured?).
+5. **Data Residency & Modeling**: Inferred data entities and storage strategies.
+6. **Security & Performance Profile**: Analysis of sanitization, auth implementation, and potential bottlenecks.
+7. **Maintenance & Scalability**: How the system supports growth (Vertical/Horizontal) and technical debt observations.
 
-**Source Code Samples**:
-{full_context[:12000]} 
+### Formatting Rules:
+- Use clean, hierarchical Markdown.
+- Use H2 for major domains and H3 for component-level details.
+- Use bulleted lists for technical debt or potential improvements.
+- Avoid generic lists; focus on architecturally significant details.
 
-**Instructions**:
-Generate a professional System Design Document (SDD) suitable for senior engineering review. Do not just summarize the code; analyze the *intent*, *architectural patterns*, and *trade-offs*.
+---
+SYSTEM STRUCTURE ANALYSIS:
+{{chr(10).join(system_structure)}}
 
-**Required Structures**:
-
-# 1. Executive Summary
-- High-level purpose of the system.
-- Key problems it solves.
-
-# 2. Architecture Overview
-- **Pattern**: (e.g., MVC, Microservices, Monolithic).
-- **Architecture Diagram Description**: Textual description of components and data flow.
-- **Core Modules**: Breakdown of major sub-systems.
-
-# 3. Component Design
-For each key component:
-- **Responsibilities**: What does it own?
-- **Interfaces**: Key public methods/API.
-- **Dependencies**: Downstream services.
-
-# 4. Data Design
-- **Entities**: Key data models inferred from classes.
-- **Storage Strategy**: How data is persisted.
-
-# 5. Security & Scalability
-- **Security Considerations**: (Input validation, Auth, Secrets).
-- **Scalability Analysis**: Horizontal/Vertical scaling potential.
-
-# 6. Implementation Guide
-- **Prerequisites**: Inferred from imports.
-- **Entry Points**: How execution flows.
-
-Provide this in clean, hierarchical Markdown.
+---
+SOURCE CODE CONTEXT:
+{{full_context[:12000]}} 
+---
 """
+
 
         system_doc = generate_doc_with_groq(system_prompt)
 
