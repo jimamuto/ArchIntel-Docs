@@ -265,6 +265,8 @@ async def register_project(request: Request):
     data = await request.json()
     name = data.get("name")
     repo_url = data.get("repo_url")
+    github_token = data.get("github_token") # Optional: PAT for private repos
+
     if not name or not repo_url:
         raise HTTPException(status_code=400, detail="Missing name or repo_url")
     try:
@@ -275,10 +277,18 @@ async def register_project(request: Request):
         if existing_data:
             # Update
             project_id = existing_data[0]["id"]
-            response = supabase.table("projects").update({"name": name, "status": "ready"}).eq("id", project_id).execute()
+            update_data = {"name": name, "status": "ready"}
+            if github_token:
+                update_data["github_token"] = github_token
+            
+            response = supabase.table("projects").update(update_data).eq("id", project_id).execute()
         else:
             # Insert
-            response = supabase.table("projects").insert({"name": name, "repo_url": repo_url, "status": "ready"}).execute()
+            insert_data = {"name": name, "repo_url": repo_url, "status": "ready"}
+            if github_token:
+                insert_data["github_token"] = github_token
+                
+            response = supabase.table("projects").insert(insert_data).execute()
             
         project = response.data[0] if hasattr(response, 'data') and response.data else response["data"][0]
         return {"message": "Project registered", "project": project}
@@ -344,7 +354,7 @@ def clone_and_ingest_code(project_id: str):
     """
     try:
         # Get project details
-        project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+        project_response = supabase.table("projects").select("name, repo_url, github_token").eq("id", project_id).execute()
         try:
             project = project_response.data[0]
         except (AttributeError, IndexError, TypeError):
@@ -357,6 +367,7 @@ def clone_and_ingest_code(project_id: str):
             raise HTTPException(status_code=404, detail="Project not found")
 
         repo_url = project["repo_url"]
+        github_token = project.get("github_token")
 
         # Check if we already have files for this project
         existing_files = supabase.table("files").select("id", count="exact").eq("project_id", project_id).execute()
@@ -376,10 +387,26 @@ def clone_and_ingest_code(project_id: str):
         repo_dir = os.path.join(temp_dir, "repo")
 
         try:
+            # Prepare clone command with authentication if token exists
+            clone_cmd = ["git", "clone", "--depth", "1", repo_url, repo_dir]
+            
+            if github_token:
+                # Construct authenticated URL: https://TOKEN@github.com/owner/repo.git
+                # Be careful not to log this URL
+                auth_repo_url = f"https://{github_token}@github.com/{owner}/{repo}.git"
+                clone_cmd = ["git", "clone", "--depth", "1", auth_repo_url, repo_dir]
+
             # Clone the repository
-            result = subprocess.run(["git", "clone", "--depth", "1", repo_url, repo_dir], capture_output=True, text=True)
+            # NOTE: We avoid capture_output=True or text=True combined with printing result on error
+            # to prevent leaking the token in logs/error messages if possible.
+            # However, for debugging we might need stderr. We'll strip the token from the error message.
+            result = subprocess.run(clone_cmd, capture_output=True, text=True)
+            
             if result.returncode != 0:
-                raise HTTPException(status_code=400, detail=f"Git clone failed: {result.stderr}")
+                error_msg = result.stderr
+                if github_token:
+                    error_msg = error_msg.replace(github_token, "[REDACTED]")
+                raise HTTPException(status_code=400, detail=f"Git clone failed: {error_msg}")
 
             # Scan files and collect metadata only
             files_to_insert = []

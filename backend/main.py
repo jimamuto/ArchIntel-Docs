@@ -9,7 +9,7 @@ sys.path.append(os.path.dirname(__file__))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import projects, docs, system
+from routers import projects, docs, system, auth
 
 app = FastAPI(title="ArchIntel Docs Backend")
 
@@ -31,6 +31,7 @@ app.add_middleware(
 app.include_router(projects.router, prefix="/projects", tags=["Projects"])
 app.include_router(docs.router, prefix="/docs", tags=["Docs"])
 app.include_router(system.router, prefix="/system", tags=["System"])
+app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 @app.get("/")
 def root():

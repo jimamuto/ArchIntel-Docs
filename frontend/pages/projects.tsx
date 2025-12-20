@@ -125,6 +125,9 @@ export default function DashboardPage() {
   // Form State
   const [name, setName] = useState('');
   const [repoUrl, setRepoUrl] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [userRepos, setUserRepos] = useState<any[]>([]);
+  const [loadingRepos, setLoadingRepos] = useState(false);
 
   // Filter State
   const [filter, setFilter] = useState('');
@@ -147,6 +150,32 @@ export default function DashboardPage() {
     fetchProjects();
   }, []);
 
+  // Listen for OAuth Success from Popup
+  useEffect(() => {
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token) {
+        setGithubToken(event.data.token);
+        showToast("GitHub Connected Successfully");
+
+        // Fetch User Repos immediately
+        setLoadingRepos(true);
+        try {
+          const res = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
+            headers: { Authorization: `token ${event.data.token}` }
+          });
+          const repos = await res.json();
+          setUserRepos(Array.isArray(repos) ? repos : []);
+        } catch (e) {
+          console.error("Failed to fetch repos", e);
+        } finally {
+          setLoadingRepos(false);
+        }
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [showToast]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(prev => ({ ...prev, submission: true }));
@@ -154,7 +183,11 @@ export default function DashboardPage() {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, repo_url: repoUrl })
+        body: JSON.stringify({
+          name,
+          repo_url: repoUrl,
+          github_token: githubToken || undefined
+        })
       });
       if (!res.ok) throw new Error('Failed to create');
       const data = await res.json();
@@ -164,7 +197,7 @@ export default function DashboardPage() {
 
       showToast('Project created successfully');
       setShowCreateForm(false);
-      setName(''); setRepoUrl('');
+      setName(''); setRepoUrl(''); setGithubToken('');
 
       // Refresh
       const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
@@ -459,15 +492,88 @@ export default function DashboardPage() {
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">Repository Source (GIT)</label>
                   <div className="relative">
                     <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
-                    <input
-                      required
-                      type="url"
-                      value={repoUrl}
-                      onChange={(e) => setRepoUrl(e.target.value)}
-                      className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
-                      placeholder="https://github.com/organization/repo"
-                    />
+
+                    {githubToken && userRepos.length > 0 ? (
+                      <select
+                        required
+                        value={repoUrl}
+                        onChange={(e) => {
+                          setRepoUrl(e.target.value);
+                          // Auto-fill name if empty
+                          if (!name) {
+                            const repo = userRepos.find(r => r.html_url === e.target.value || r.clone_url === e.target.value);
+                            if (repo) setName(repo.name.toUpperCase());
+                          }
+                        }}
+                        className="flex h-12 w-full appearance-none rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
+                      >
+                        <option value="">Select a repository...</option>
+                        {userRepos.map(repo => (
+                          <option key={repo.id} value={repo.clone_url}>
+                            {repo.full_name} ({repo.private ? 'Private' : 'Public'})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        required
+                        type="url"
+                        value={repoUrl}
+                        onChange={(e) => setRepoUrl(e.target.value)}
+                        className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
+                        placeholder="https://github.com/organization/repo"
+                      />
+                    )}
                   </div>
+                  {githubToken && loadingRepos && <p className="text-[10px] text-gray-500 pl-1">Loading repositories...</p>}
+                </div>
+
+                <div className="grid gap-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">
+                    GitHub Access
+                  </label>
+
+                  {githubToken ? (
+                    <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        <span className="text-sm text-green-400 font-bold">GitHub Connected</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setGithubToken('')}
+                        className="text-gray-500 hover:text-white h-6 px-2"
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Button
+                        type="button"
+                        onClick={() => {
+                          const width = 600;
+                          const height = 700;
+                          const left = (window.screen.width - width) / 2;
+                          const top = (window.screen.height - height) / 2;
+                          window.open(
+                            `${process.env.NEXT_PUBLIC_API_BASE_URL}/auth/github/login`,
+                            'github_oauth',
+                            `width=${width},height=${height},top=${top},left=${left}`
+                          );
+                        }}
+                        className="w-full bg-[#24292F] hover:bg-[#24292F]/80 text-white border border-white/10 rounded-xl flex items-center justify-center gap-2"
+                      >
+                        <Github className="w-4 h-4" />
+                        Connect GitHub Account
+                      </Button>
+                      <p className="text-[10px] text-gray-500 text-center">
+                        Required for private repositories. Grants read-only access.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
