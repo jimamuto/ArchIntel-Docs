@@ -30,6 +30,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { authenticatedFetch, logout, getSession } from '../lib/auth_utils';
 import Link from 'next/link';
 import { useToast } from '../lib/toast';
 import Head from 'next/head';
@@ -232,7 +233,7 @@ export default function Docs() {
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
       const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/${selectedFile}?repo_path=${encodeURIComponent(repoPath)}`;
 
-      const response = await fetch(url);
+      const response = await authenticatedFetch(url);
       if (response.ok) {
         const data = await response.json();
         setCommits(data.commits || []);
@@ -250,7 +251,7 @@ export default function Docs() {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
       const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/stats?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
-      const response = await fetch(url);
+      const response = await authenticatedFetch(url);
       if (response.ok) {
         const data = await response.json();
         setAuthorStats(data.stats || []);
@@ -268,7 +269,7 @@ export default function Docs() {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
       const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/diff?commit_hash=${commitHash}&file_path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
-      const response = await fetch(url);
+      const response = await authenticatedFetch(url);
       if (response.ok) {
         const data = await response.json();
         setCommitDiffs(prev => ({ ...prev, [commitHash]: data.diff }));
@@ -292,7 +293,7 @@ export default function Docs() {
     if (!selectedProject) return;
     setLoadingRationale(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/rationale`);
+      const response = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/rationale`);
       if (response.ok) {
         const data = await response.json();
         setRationaleData(data);
@@ -307,7 +308,7 @@ export default function Docs() {
   const fetchDiscussions = async () => {
     if (!selectedProject) return;
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/discussions`);
+      const response = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/discussions`);
       if (response.ok) {
         const data = await response.json();
         setDiscussions(data.discussions || []);
@@ -322,7 +323,7 @@ export default function Docs() {
     setIsIngesting(true);
     try {
       showToast("Ingesting discussions from GitHub...");
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/ingest/discussions`, {
+      const response = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/ingest/discussions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ limit: 30 })
@@ -417,14 +418,14 @@ export default function Docs() {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
-      const aiPromise = fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/query`, {
+      const aiPromise = authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, repo_path: repoPath })
       }).then(res => res.json());
 
       // 2. Perform Keyword Search
-      const searchPromise = fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/search`, {
+      const searchPromise = authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
@@ -449,7 +450,7 @@ export default function Docs() {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
-      const res = await fetch(
+      const res = await authenticatedFetch(
         `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/diagram?type=${type}&path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
       );
       const diagram = await res.text();
@@ -478,7 +479,7 @@ export default function Docs() {
     try {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/graph?repo_path=${encodeURIComponent(repoPath)}`);
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/graph?repo_path=${encodeURIComponent(repoPath)}`);
       const data = await res.json();
       setGraphData(data);
     } catch (err) {
@@ -498,7 +499,7 @@ export default function Docs() {
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/system/doc?repo_path=${encodeURIComponent(repoPath)}`);
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/system/doc?repo_path=${encodeURIComponent(repoPath)}`);
       const text = await res.text();
       setSystemDoc(text);
     } catch (err) {
@@ -514,7 +515,7 @@ export default function Docs() {
 
     setLoading(prev => ({ ...prev, content: true }));
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc`, {
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: selectedFile, content: editContent })
@@ -534,21 +535,24 @@ export default function Docs() {
     }
   }
 
-  // Fetch projects on mount and restore last selection
+  // Authentication and Project Fetching
   useEffect(() => {
-    async function fetchProjects() {
+    async function checkAuthAndFetch() {
+      const session = await getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
       try {
         setLoading(prev => ({ ...prev, projects: true }));
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+        const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
         const data = await res.json();
         const projectsList = data.projects || [];
         setProjects(projectsList);
         setError(null);
 
-        // Selection Logic:
-        // 1. Check Query Param
-        // 2. Check LocalStorage
-        // 3. Fallback to only project
+        // Selection Logic
         if (router.query.project) {
           setSelectedProject(router.query.project);
         } else if (!selectedProject) {
@@ -567,7 +571,7 @@ export default function Docs() {
     }
 
     if (router.isReady) {
-      fetchProjects();
+      checkAuthAndFetch();
     }
   }, [router.isReady, router.query.project]);
 
@@ -589,7 +593,7 @@ export default function Docs() {
       setLoading(prev => ({ ...prev, structure: true }));
       setError(null);
       try {
-        const structureRes = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/structure`);
+        const structureRes = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/structure`);
         const structureData = await structureRes.json();
         setStructure(structureData.structure || []);
       } catch (err) {
@@ -637,7 +641,7 @@ export default function Docs() {
         let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
         setLoadingProgress({ message: 'Generating architectural documentation...', percent: 40 });
-        const docRes = await fetch(
+        const docRes = await authenticatedFetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
         );
         const docText = docRes.ok ? await docRes.text() : '// Documentation generation in progress...';
@@ -646,7 +650,7 @@ export default function Docs() {
         setIsEditing(false);
 
         setLoadingProgress({ message: 'Fetching source code...', percent: 80 });
-        const codeRes = await fetch(
+        const codeRes = await authenticatedFetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/file/code?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
         );
         const codeText = codeRes.ok ? await codeRes.text() : '// Could not fetch source code';

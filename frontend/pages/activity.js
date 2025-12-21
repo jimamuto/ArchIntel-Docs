@@ -13,6 +13,8 @@ import {
 import { cn } from '../lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 
+import { authenticatedFetch } from '../lib/auth_utils';
+
 export default function ActivityPage() {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -24,7 +26,7 @@ export default function ActivityPage() {
 
     const fetchLogs = async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/activity`);
+            const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/activity`);
             const data = await res.json();
             setLogs(data.logs || []);
         } catch (err) {

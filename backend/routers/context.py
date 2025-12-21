@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from typing import List, Optional
 from pydantic import BaseModel
 from supabase import create_client, Client
@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 from services.github_service import GitHubService
 from services.llm_service import generate_doc
+from routers.auth import get_supabase_client
 
 router = APIRouter()
 
@@ -18,7 +19,7 @@ class IngestRequest(BaseModel):
     limit: Optional[int] = 30
 
 @router.post("/{project_id}/ingest/discussions")
-async def ingest_discussions(project_id: str, request: IngestRequest = Body(...)):
+async def ingest_discussions(project_id: str, request: IngestRequest = Body(...), supabase: Client = Depends(get_supabase_client)):
     """
     Fetch PRs and Issues from GitHub and store them in the database.
     """
@@ -80,7 +81,8 @@ async def ingest_discussions(project_id: str, request: IngestRequest = Body(...)
 async def get_discussions(
     project_id: str,
     source: Optional[str] = Query(None, regex="^(github_pr|github_issue)$"),
-    limit: int = Query(50, ge=1, le=100)
+    limit: int = Query(50, ge=1, le=100),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Retrieve ingested discussions for a project.
@@ -99,7 +101,7 @@ async def get_discussions(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{project_id}/rationale")
-async def get_rationale(project_id: str):
+async def get_rationale(project_id: str, supabase: Client = Depends(get_supabase_client)):
     """
     Generate a design rationale for the project by analyzing ingested discussions.
     """

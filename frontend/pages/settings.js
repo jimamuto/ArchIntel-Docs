@@ -8,10 +8,12 @@ import {
     Save,
     Database,
     RefreshCw,
-    Clock
+    Clock,
+    LogOut
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { useToast } from '../lib/toast';
+import { logout, authenticatedFetch } from '../lib/auth_utils';
 
 export default function SettingsPage() {
     const { success: showToast, error: showError } = useToast();
@@ -31,7 +33,7 @@ export default function SettingsPage() {
 
     const fetchSettings = async () => {
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/settings`);
+            const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/settings`);
             const data = await res.json();
             setSettings(data);
         } catch (err) {
@@ -44,7 +46,7 @@ export default function SettingsPage() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/settings`, {
+            const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/settings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(settings)
@@ -195,18 +197,30 @@ export default function SettingsPage() {
                             </div>
                         </section>
 
-                        {/* Account Placeholder */}
-                        <section className="bg-[#111318] border border-white/[0.05] rounded-2xl p-6 space-y-6 border-dashed border-white/20 opacity-50">
+                        {/* Account Section */}
+                        <section className="bg-[#111318] border border-white/[0.05] rounded-2xl p-6 space-y-6">
                             <div className="flex items-center gap-3 mb-2">
-                                <div className="w-10 h-10 rounded-xl bg-gray-500/10 flex items-center justify-center">
-                                    <Clock className="w-5 h-5 text-gray-500" />
+                                <div className="w-10 h-10 rounded-xl bg-aurora-purple/10 flex items-center justify-center">
+                                    <Clock className="w-5 h-5 text-aurora-purple" />
                                 </div>
                                 <div>
                                     <h3 className="font-bold text-white">Account Info</h3>
-                                    <p className="text-xs text-gray-500">User Management</p>
+                                    <p className="text-xs text-gray-500">Session Management</p>
                                 </div>
                             </div>
-                            <p className="text-xs text-center py-4 italic">Login & Signup under development.</p>
+                            <div className="space-y-4">
+                                <p className="text-sm text-gray-400">
+                                    You are currently signed in. You can securely log out of your account here.
+                                </p>
+                                <Button
+                                    onClick={logout}
+                                    variant="outline"
+                                    className="w-full border-red-500/50 text-red-500 hover:bg-red-500 hover:text-white transition-all flex gap-2"
+                                >
+                                    <LogOut className="w-4 h-4" />
+                                    Sign Out
+                                </Button>
+                            </div>
                         </section>
                     </div>
                 </div>

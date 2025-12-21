@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Request
-from supabase import create_client, Client
 import os
 from datetime import datetime
+from routers.auth import get_supabase_client
+from fastapi import APIRouter, HTTPException, Request, Depends
+from supabase import create_client, Client
 
 router = APIRouter()
 
@@ -10,7 +11,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @router.get("/activity")
-def get_activity():
+def get_activity(supabase: Client = Depends(get_supabase_client)):
     """
     Fetch system activity logs. 
     If the table doesn't exist yet, we'll return a simulated log based on project activity.

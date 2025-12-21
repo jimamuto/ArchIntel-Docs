@@ -1,0 +1,24 @@
+name: ArchIntel Ingest
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    types: [ closed ]
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    if: github.event_name != 'pull_request' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Trigger ArchIntel Ingest
+        run: |
+          curl -X POST "${{ secrets.ARCHINTEL_API_URL }}/projects/${{ secrets.ARCHINTEL_PROJECT_ID }}/sync" \
+          -H "Authorization: Bearer ${{ secrets.ARCHINTEL_API_TOKEN }}" \
+          -H "Content-Type: application/json"

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, Query
+from fastapi import APIRouter, HTTPException, Request, Query, Depends
 from fastapi.responses import PlainTextResponse, FileResponse
 import tempfile
 import shutil
@@ -11,6 +11,8 @@ import gzip
 import hashlib
 import base64
 from datetime import datetime
+
+from routers.auth import get_current_user, get_supabase_client
 
 router = APIRouter()
 
@@ -77,7 +79,7 @@ async def stateless_extract_docs(request: Request):
 
 # --- New endpoint: Extract code from a file for a project ---
 @router.get("/{project_id}/file/code", response_class=PlainTextResponse)
-def get_file_code(project_id: str, path: str = Query(..., description="Relative path of the file in the project"), repo_path: str = Query(..., description="Local path to the repo")):
+def get_file_code(project_id: str, path: str = Query(..., description="Relative path of the file in the project"), repo_path: str = Query(..., description="Local path to the repo"), supabase: Client = Depends(get_supabase_client)):
     """
     Returns the code content of a file for a given project and relative file path.
     Reads from filesystem only (stateless - no database storage).
@@ -236,9 +238,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @router.get("")
-def get_projects():
+def get_projects(user = Depends(get_current_user), supabase: Client = Depends(get_supabase_client)):
     try:
-        response = supabase.table("projects").select("id, name, repo_url, status, created_at, updated_at").execute()
+        response = supabase.table("projects").select("id, name, repo_url, status, created_at, updated_at").eq("user_id", user.id).execute()
         projects = response.data if hasattr(response, 'data') else response["data"]
         
         # Enrich each project with real-time stats
@@ -261,7 +263,7 @@ def get_projects():
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("")
-async def register_project(request: Request):
+async def register_project(request: Request, user = Depends(get_current_user), supabase: Client = Depends(get_supabase_client)):
     data = await request.json()
     name = data.get("name")
     repo_url = data.get("repo_url")
@@ -270,8 +272,8 @@ async def register_project(request: Request):
     if not name or not repo_url:
         raise HTTPException(status_code=400, detail="Missing name or repo_url")
     try:
-        # Check for existing project
-        existing = supabase.table("projects").select("*").eq("repo_url", repo_url).execute()
+        # Check for existing project for THIS user
+        existing = supabase.table("projects").select("*").eq("repo_url", repo_url).eq("user_id", user.id).execute()
         existing_data = existing.data if hasattr(existing, 'data') else existing["data"]
         
         if existing_data:
@@ -281,10 +283,10 @@ async def register_project(request: Request):
             if github_token:
                 update_data["github_token"] = github_token
             
-            response = supabase.table("projects").update(update_data).eq("id", project_id).execute()
+            response = supabase.table("projects").update(update_data).eq("id", project_id).eq("user_id", user.id).execute()
         else:
             # Insert
-            insert_data = {"name": name, "repo_url": repo_url, "status": "ready"}
+            insert_data = {"name": name, "repo_url": repo_url, "status": "ready", "user_id": user.id}
             if github_token:
                 insert_data["github_token"] = github_token
                 
@@ -296,7 +298,7 @@ async def register_project(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/ingest/code")
-async def ingest_code(project_id: str, request: Request):
+async def ingest_code(project_id: str, request: Request, supabase: Client = Depends(get_supabase_client)):
     data = await request.json()
     repo_path = data.get("repo_path")
     if not repo_path or not os.path.exists(repo_path):
@@ -338,7 +340,7 @@ async def ingest_code(project_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{project_id}/structure")
-def get_structure(project_id: str):
+def get_structure(project_id: str, supabase: Client = Depends(get_supabase_client)):
     try:
         response = supabase.table("files").select("id, path, language").eq("project_id", project_id).execute()
         files = response.data if hasattr(response, 'data') else response["data"]
@@ -347,7 +349,7 @@ def get_structure(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/clone")
-def clone_and_ingest_code(project_id: str):
+def clone_and_ingest_code(project_id: str, supabase: Client = Depends(get_supabase_client)):
     """
     Clone repository and ingest file metadata only (stateless - no content storage).
     Creates temporary clone to scan file structure without storing sensitive code.
@@ -455,7 +457,7 @@ def clone_and_ingest_code(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/sync")
-async def sync_project(project_id: str):
+async def sync_project(project_id: str, supabase: Client = Depends(get_supabase_client)):
     """
     Synchronizes the project by deleting existing metadata and re-scanning.
     """
@@ -467,12 +469,12 @@ async def sync_project(project_id: str):
         supabase.table("projects").update({"status": "analyzing"}).eq("id", project_id).execute()
         
         # 3. Trigger re-ingestion
-        return clone_and_ingest_code(project_id)
+        return clone_and_ingest_code(project_id, supabase)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{project_id}")
-async def delete_project(project_id: str):
+async def delete_project(project_id: str, supabase: Client = Depends(get_supabase_client)):
     try:
         # First delete all files associated with the project
         supabase.table("files").delete().eq("project_id", project_id).execute()

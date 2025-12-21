@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../lib/toast';
 import { cn } from '../lib/utils';
+import { authenticatedFetch, getSession } from '../lib/auth_utils';
 import Head from 'next/head';
 
 // --- Background Component ---
@@ -81,7 +82,7 @@ export default function DashboardPage() {
       const project = projects.find(p => p.id === id);
       if (!project) return;
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}/sync`, {
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}/sync`, {
         method: 'POST'
       });
 
@@ -89,7 +90,7 @@ export default function DashboardPage() {
         showToast(`Synchronization initialized for ${project.name}.`);
         // Refresh project list after a short delay to see status changes
         setTimeout(async () => {
-          const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+          const refresh = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
           const refreshData = await refresh.json();
           setProjects(refreshData.projects || []);
         }, 1000);
@@ -110,7 +111,7 @@ export default function DashboardPage() {
   async function deleteProject(id: number) {
     if (!confirm('Are you sure you want to terminate this node?')) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}`, { method: 'DELETE' });
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setProjects(projects.filter(p => p.id !== id));
         showToast("Node terminated.");
@@ -132,12 +133,35 @@ export default function DashboardPage() {
   // Filter State
   const [filter, setFilter] = useState('');
 
-  // Fetch projects
+  // Authentication and Fetch projects
   useEffect(() => {
-    async function fetchProjects() {
+    async function checkAuthAndFetch() {
+      const session = await getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+
+      // Automatically fetch GitHub repos if provider token is available
+      if (session.provider_token) {
+        setGithubToken(session.provider_token);
+        setLoadingRepos(true);
+        try {
+          const res = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
+            headers: { Authorization: `token ${session.provider_token}` }
+          });
+          const repos = await res.json();
+          setUserRepos(Array.isArray(repos) ? repos : []);
+        } catch (e) {
+          console.error("Failed to fetch repos", e);
+        } finally {
+          setLoadingRepos(false);
+        }
+      }
+
       setLoading(prev => ({ ...prev, projects: true }));
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+        const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
         if (!res.ok) throw new Error('Failed to fetch');
         const data = await res.json();
         setProjects(data.projects || []);
@@ -147,17 +171,19 @@ export default function DashboardPage() {
         setLoading(prev => ({ ...prev, projects: false }));
       }
     }
-    fetchProjects();
-  }, []);
 
-  // Listen for OAuth Success from Popup
+    if (router.isReady) {
+      checkAuthAndFetch();
+    }
+  }, [router.isReady]);
+
+  // Legacy OAuth listener (can be kept for manual linking if needed, but primary flow is now session-based)
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       if (event.data?.type === 'GITHUB_AUTH_SUCCESS' && event.data?.token) {
         setGithubToken(event.data.token);
         showToast("GitHub Connected Successfully");
 
-        // Fetch User Repos immediately
         setLoadingRepos(true);
         try {
           const res = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
@@ -180,7 +206,7 @@ export default function DashboardPage() {
     e.preventDefault();
     setLoading(prev => ({ ...prev, submission: true }));
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`, {
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -193,14 +219,14 @@ export default function DashboardPage() {
       const data = await res.json();
 
       // Background clone
-      fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${data.project.id}/clone`, { method: 'POST' }).catch(() => { });
+      authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${data.project.id}/clone`, { method: 'POST' }).catch(() => { });
 
       showToast('Project created successfully');
       setShowCreateForm(false);
       setName(''); setRepoUrl(''); setGithubToken('');
 
       // Refresh
-      const refresh = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+      const refresh = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
       const refreshData = await refresh.json();
       setProjects(refreshData.projects || []);
     } catch (err) {

@@ -1,6 +1,7 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { getSession } from '@/lib/auth_utils';
 import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
 import {
   ArrowRight,
@@ -80,6 +81,15 @@ export default function LandingPage() {
   const [email, setEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    async function checkUser() {
+      const session = await getSession();
+      if (session) setUser(session.user);
+    }
+    checkUser();
+  }, []);
 
   const handleWaitlist = (e) => {
     e.preventDefault();
@@ -131,7 +141,7 @@ export default function LandingPage() {
             </button>
             <Link href="/projects">
               <Button className="bg-aurora-purple hover:bg-aurora-purple/80 text-white rounded-full px-6 py-5 font-bold text-sm shadow-glow transition-all hover:scale-105">
-                Start Analysis
+                Get Started
               </Button>
             </Link>
           </div>
@@ -168,9 +178,9 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-6">
-            <Link href="/projects">
+            <Link href="/signup">
               <Button size="lg" className="h-14 px-10 rounded-full bg-aurora-purple hover:bg-aurora-purple/80 text-white font-black text-lg shadow-glow">
-                Try for Free
+                Start Analysis
               </Button>
             </Link>
             <Button size="lg" variant="outline" className="h-14 px-10 rounded-full border-white/10 bg-white/5 hover:bg-white/10 text-white gap-3 group transition-all">
@@ -274,9 +284,9 @@ export default function LandingPage() {
       <section className="py-40 relative flex flex-col items-center justify-center text-center overflow-hidden">
         <div className="absolute top-0 w-[400px] h-[400px] bg-aurora-purple/30 blur-[150px] opacity-20" />
         <h2 className="text-5xl md:text-7xl font-black tracking-tighter mb-10 z-10 leading-[0.9]">Ready to see <br />the full graph?</h2>
-        <Link href="/projects" className="z-10 mt-6">
+        <Link href="/signup" className="z-10 mt-6">
           <Button size="lg" className="h-16 px-14 rounded-full bg-aurora-purple hover:bg-aurora-purple/80 text-white font-black text-xl shadow-glow transition-all hover:scale-105">
-            Register Repository
+            Start Free Trial
           </Button>
         </Link>
         <button

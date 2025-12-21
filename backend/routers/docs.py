@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from typing import Optional
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
@@ -20,128 +20,9 @@ from llm_groq import generate_doc_with_groq
 from services.git_service import GitHistoryService
 from services.github_service import GitHubService
 import re
-
-# ... (existing code)
-
-@router.get("/{project_id}/history/stats")
-async def get_author_stats(
-    project_id: str,
-    path: str = Query(..., description="File path"),
-    repo_path: str = Query(..., description="Local path to the repo")
-):
-    try:
-        repo_path_full = resolve_repo_path(repo_path)
-        if not os.path.exists(repo_path_full):
-            return {"stats": []}
-            
-        stats = GitHistoryService.get_author_stats(repo_path_full, path)
-        return {"stats": stats}
-    except Exception as e:
-        print(f"Error fetching stats: {e}")
-        return {"stats": [], "error": str(e)}
-
-@router.get("/{project_id}/history/diff")
-async def get_commit_diff(
-    project_id: str,
-    commit_hash: str = Query(..., description="Commit Hash"),
-    file_path: str = Query(..., description="File path"),
-    repo_path: str = Query(..., description="Local path to the repo")
-):
-    try:
-        repo_path_full = resolve_repo_path(repo_path)
-        diff = GitHistoryService.get_commit_diff(repo_path_full, commit_hash, file_path)
-        return {"diff": diff}
-    except Exception as e:
-        return {"diff": "", "error": str(e)}
-
-@router.get("/{project_id}/search")
-async def search_project_files(
-    project_id: str,
-    q: str = Query(..., description="Search query"),
-    repo_path: str = Query(".", description="Local path to the repo")
-):
-    """
-    Search for files and documentation content within the project.
-    """
-    try:
-        # TODO: Implement actual full-text search. 
-        # For now, we'll do a basic filename search and mock doc search
-        # or leverage Supabase if we had vector search.
-        
-        repo_path_full = resolve_repo_path(repo_path)
-        
-        results = {
-            "files": [],
-            "documentation": []
-        }
-        
-        if not q:
-            return results
-
-        # 1. Search Filesystem for filenames
-        if os.path.exists(repo_path_full):
-            for root, dirs, files in os.walk(repo_path_full):
-                # Skip ignoring folders
-                dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__']]
-                
-                for file in files:
-                    if q.lower() in file.lower():
-                        rel_path = os.path.relpath(os.path.join(root, file), repo_path_full)
-                        results["files"].append({
-                            "path": rel_path,
-                            "name": file
-                        })
-                        if len(results["files"]) >= 10: break
-                if len(results["files"]) >= 10: break
-
-        # 2. Search Documentation in DB
-        try:
-             # Basic LIKE search on file_path or content
-             db_res = supabase.table("file_documentation").select("file_path, content").ilike("file_path", f"%{q}%").limit(5).execute()
-             db_data = db_res.data if hasattr(db_res, 'data') else db_res["data"]
-             
-             if db_data:
-                 for item in db_data:
-                     results["documentation"].append({
-                         "path": item["file_path"],
-                         "preview": item.get("content", "")[:100] + "..."
-                     })
-        except Exception as e:
-            print(f"Search DB Error: {e}")
-
-        return results
-
-    except Exception as e:
-        print(f"Search Error: {e}")
-        return {"files": [], "documentation": [], "error": str(e)}
-
-@router.get("/{project_id}/history/{file_path:path}")
-async def get_file_history(
-    project_id: str,
-    file_path: str,
-    repo_path: str = Query(..., description="Local path to the repo")
-):
-    """
-    Get git history for a specific file.
-    """
-    try:
-        repo_path_full = resolve_repo_path(repo_path)
-        if not os.path.exists(repo_path_full):
-             # Try to clone if strictly necessary or return empty
-             return {"commits": []}
-
-        # Be careful with file_path, it might be URL encoded or have slashes
-        # The path param capture might eat slashes, so we need to be careful.
-        # However, typical usage is history/path/to/file
-        
-        commits = GitHistoryService.get_file_history(repo_path_full, file_path)
-        return {"commits": commits}
-    except Exception as e:
-        print(f"Error fetching history: {e}")
-        return {"commits": [], "error": str(e)}
+from routers.auth import get_supabase_client
 
 
-print("DEBUG: LOADING MODIFIED DOCS ROUTER V3 - " + str(datetime.now()))
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -160,7 +41,7 @@ class DocUpdate(BaseModel):
     content: str
 
 @router.post("/{project_id}/file/doc")
-def update_file_documentation(project_id: str, doc_update: DocUpdate):
+def update_file_documentation(project_id: str, doc_update: DocUpdate, supabase: Client = Depends(get_supabase_client)):
     """
     Update or create documentation for a specific file.
     Stores the content in the file_documentation table.
@@ -217,7 +98,8 @@ def resolve_repo_path(repo_path: str) -> str:
 async def get_file_llm_documentation(
     project_id: str,
     path: str = Query(..., description="Relative path of the file in the project"),
-    repo_path: str = Query(..., description="Local path to the repo")
+    repo_path: str = Query(..., description="Local path to the repo"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Generate documentation for a code file using Groq LLM.
@@ -349,7 +231,8 @@ async def get_file_diagram(
     project_id: str,
     type: str = Query(..., description="Type of diagram: flowchart, sequence"),
     path: str = Query(..., description="Relative path of the file"),
-    repo_path: str = Query(..., description="Local path to the repo")
+    repo_path: str = Query(..., description="Local path to the repo"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Generate a specific Mermaid diagram for a code file using Groq LLM.
@@ -383,7 +266,8 @@ async def get_file_diagram(
 async def download_file_llm_documentation(
     project_id: str,
     path: str = Query(..., description="Relative path of the file in the project"),
-    repo_path: str = Query(..., description="Local path to the repo")
+    repo_path: str = Query(..., description="Local path to the repo"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Generate documentation for a code file using Groq LLM and return as downloadable file.
@@ -459,7 +343,7 @@ FILE CONTENT:
         raise HTTPException(status_code=500, detail=f"Error generating documentation: {str(e)}")
 
 @router.post("/{project_id}/test")
-def run_project_tests(project_id: str):
+def run_project_tests(project_id: str, supabase: Client = Depends(get_supabase_client)):
     """Run comprehensive tests on the project and return results"""
     try:
         # Get project information
@@ -484,7 +368,7 @@ def run_project_tests(project_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/stateless-tests")
-def run_stateless_tests(project_id: str):
+def run_stateless_tests(project_id: str, supabase: Client = Depends(get_supabase_client)):
     """Run stateless code extraction and filesystem verification tests"""
     try:
         # Get project information
@@ -507,7 +391,8 @@ def run_stateless_tests(project_id: str):
 @router.get("/{project_id}/system/doc", response_class=PlainTextResponse)
 async def get_system_documentation(
     project_id: str,
-    repo_path: str = Query(..., description="Local path to the repo")
+    repo_path: str = Query(..., description="Local path to the repo"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Generate comprehensive documentation for the entire project/system.
@@ -650,7 +535,8 @@ CONTEXTUAL SAMPLES (Sampled from key files):
 @router.get("/{project_id}/system/doc/download")
 async def download_system_documentation(
     project_id: str,
-    repo_path: str = Query(..., description="Local path to the repo")
+    repo_path: str = Query(..., description="Local path to the repo"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Generate comprehensive system documentation and return as downloadable file.
@@ -1011,7 +897,7 @@ def run_stateless_test_suite(project: dict) -> dict:
 
     return test_results
 
-def generate_file_documentation(file_path: str, language: str, project_id: str) -> str:
+def generate_file_documentation(file_path: str, language: str, project_id: str, supabase: Client) -> str:
     """Generate documentation for a specific file using AI analysis"""
     temp_dir = None
     try:
@@ -1199,6 +1085,7 @@ async def get_commit_diff(
     commit_hash: str = Query(..., description="Commit hash to get diff for"),
     file_path: Optional[str] = Query(None, description="Optional specific file path"),
     repo_path: str = Query(..., description="Local path to the repository"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Get the raw unified diff for a specific commit.
@@ -1231,7 +1118,8 @@ async def get_commit_diff(
 async def get_author_stats(
     project_id: str,
     path: Optional[str] = Query(None, description="Optional file or folder path"),
-    repo_path: str = Query(..., description="Local path to the repository")
+    repo_path: str = Query(..., description="Local path to the repository"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """Get aggregated author statistics for a path or the whole project."""
     try:
@@ -1266,7 +1154,8 @@ async def get_file_history(
     project_id: str,
     file_path: str,
     repo_path: str = Query(..., description="Local path to the repository"),
-    limit: int = Query(50, description="Maximum number of commits to return")
+    limit: int = Query(50, description="Maximum number of commits to return"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Get Git commit history for a specific file.
@@ -1330,7 +1219,8 @@ async def get_file_history(
 async def get_project_history(
     project_id: str,
     repo_path: str = Query(..., description="Local path to the repository"),
-    limit: int = Query(100, description="Maximum number of commits to return")
+    limit: int = Query(100, description="Maximum number of commits to return"),
+    supabase: Client = Depends(get_supabase_client)
 ):
     """
     Get overall Git commit history for the entire project.
@@ -1374,7 +1264,7 @@ class SearchRequest(BaseModel):
     query: str
 
 @router.post("/{project_id}/search")
-async def search_docs(project_id: str, request: SearchRequest):
+async def search_docs(project_id: str, request: SearchRequest, supabase: Client = Depends(get_supabase_client)):
     """
     Search for files by path and documentation by content.
     Returns matching files and documentation snippets.
@@ -1424,7 +1314,7 @@ async def search_docs(project_id: str, request: SearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{project_id}")
-def get_docs(project_id: str, file: str = Query(None)):
+def get_docs(project_id: str, file: str = Query(None), supabase: Client = Depends(get_supabase_client)):
     if not file:
         return {"docs": []}
 
@@ -1440,7 +1330,7 @@ def get_docs(project_id: str, file: str = Query(None)):
         language = file_info.get("language", "unknown")
 
         # Generate documentation based on file type and content
-        docs_content = generate_file_documentation(file, language, project_id)
+        docs_content = generate_file_documentation(file, language, project_id, supabase)
 
         return {"docs": docs_content}
 
