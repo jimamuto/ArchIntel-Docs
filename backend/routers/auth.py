@@ -134,12 +134,18 @@ async def github_callback(code: str):
                     setTimeout(() => window.close(), 1000);
                 }} else {{
                     // If not a popup, redirect to projects page
-                    setTimeout(() => window.location.href = 'http://localhost:3000/projects', 2000);
+                    const frontendUrl = document.body.dataset.frontendUrl || 'http://localhost:3000';
+                    setTimeout(() => window.location.href = `${frontendUrl}/projects`, 2000);
                 }}
             </script>
         </body>
     </html>
     """
+    # We can inject the FRONTEND_URL via data-attribute if we want, or just hardcode for now if we don't have a template engine.
+    # Actually, a better way is to just use the env variable directly in the string.
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    html_content = html_content.replace("document.body.dataset.frontendUrl", f"'{frontend_url}'")
+    
     return HTMLResponse(content=html_content)
 
 @router.get("/me")

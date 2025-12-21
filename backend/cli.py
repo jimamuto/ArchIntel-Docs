@@ -4,7 +4,7 @@ import json
 import sys
 import os
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("ARCHINTEL_API_URL", "http://localhost:8000")
 
 def main():
     parser = argparse.ArgumentParser(description="ArchIntel CLI - Structural Code Intelligence")
