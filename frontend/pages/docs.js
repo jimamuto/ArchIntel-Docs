@@ -25,7 +25,8 @@ import {
   ArrowDownLeft,
   Edit2,
   Save,
-  Ban
+  Ban,
+  Sparkles
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Link from 'next/link';
@@ -33,6 +34,93 @@ import { useToast } from '../lib/toast';
 import Head from 'next/head';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import mermaid from 'mermaid';
+
+// Initialize mermaid
+if (typeof window !== 'undefined') {
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    securityLevel: 'loose',
+    fontFamily: 'Inter, sans-serif',
+  });
+}
+
+// --- Mermaid Component ---
+const Mermaid = ({ chart }) => {
+  const ref = useRef(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (ref.current && chart) {
+      setError(null);
+      ref.current.removeAttribute('data-processed');
+
+      // Pre-process chart to remove potential LLM mess-ups
+      let cleanedChart = String(chart).trim();
+
+      // Remove markdown code fences if they were accidentally included by LLM or parser
+      cleanedChart = cleanedChart.replace(/^```mermaid\n?/, '').replace(/\n?```$/, '');
+
+      // Fix common LLM arrow syntax errors: -->|label|> should be -->|"label"|
+      // This regex matches patterns like -->|text|> and converts to -->|"text"|
+      cleanedChart = cleanedChart.replace(/-->\|([^|]+)\|>/g, '-->|"$1"|');
+
+      // Also fix the variant without the initial arrow: --|text|>
+      cleanedChart = cleanedChart.replace(/--\|([^|]+)\|>/g, '--|"$1"|');
+
+      // Ensure the chart starts with a valid Mermaid keyword (ignoring comments)
+      const validKeywords = ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'erDiagram', 'journey', 'gantt', 'pie', 'requirementDiagram'];
+      const lines = cleanedChart.split('\n');
+      const firstLine = lines[0].trim();
+      const hasKeyword = validKeywords.some(keyword => firstLine.toLowerCase().startsWith(keyword.toLowerCase()));
+
+      if (!hasKeyword && !firstLine.startsWith('%%')) {
+        // If no keyword, try to fix it if it looks like a flowchart
+        if (cleanedChart.includes('-->')) {
+          cleanedChart = 'graph TD\n' + cleanedChart;
+        }
+      }
+
+      console.log('Rendering Mermaid chart:', cleanedChart);
+
+      const uniqueId = `mermaid-${Math.random().toString(36).substr(2, 9)}`;
+
+      try {
+        mermaid.render(uniqueId, cleanedChart)
+          .then(({ svg }) => {
+            if (ref.current) {
+              ref.current.innerHTML = svg;
+            }
+          })
+          .catch((err) => {
+            console.error('Mermaid async error:', err);
+            setError(err?.message || 'Syntax error in diagram description');
+          });
+      } catch (err) {
+        console.error('Mermaid sync error:', err);
+        setError(err?.message || 'Failed to initialize rendering');
+      }
+    }
+  }, [chart]);
+
+  if (error) {
+    return (
+      <div className="my-6 p-6 rounded-xl border border-red-500/20 bg-red-500/5 text-center">
+        <p className="text-sm text-red-400 font-medium mb-1">Visual Generation Error</p>
+        <p className="text-xs text-red-400/70 font-mono">{error}</p>
+        <details className="mt-3 text-left">
+          <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 underline uppercase tracking-widest">Show Source Code</summary>
+          <pre className="mt-2 p-3 bg-black/40 rounded text-[10px] text-gray-400 overflow-x-auto border border-white/5">
+            {chart}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+
+  return <div ref={ref} className="mermaid flex justify-center py-6 bg-black/20 rounded-xl my-6 border border-white/5" />;
+};
 
 // --- Background Component ---
 const BlueprintBackground = () => (
@@ -116,6 +204,35 @@ export default function Docs() {
       setQueryResponse('Error connecting to architecture node.');
     } finally {
       setIsQuerying(false);
+    }
+  }
+
+  async function generateDiagram(type) {
+    if (!selectedFile || !selectedProject) return;
+    setLoading(prev => ({ ...prev, content: true }));
+    try {
+      const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+      let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/diagram?type=${type}&path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
+      );
+      const diagram = await res.text();
+
+      if (diagram.startsWith('Error')) {
+        showError(diagram);
+        return;
+      }
+
+      // Append the diagram to the current docs
+      const newDocs = `${docs}\n\n## AI Visual: ${type.charAt(0).toUpperCase() + type.slice(1)}\n${diagram}`;
+      setDocs(newDocs);
+      setEditContent(newDocs); // Keep edit content in sync
+      showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} diagram added!`);
+    } catch (err) {
+      showError('Failed to generate diagram');
+    } finally {
+      setLoading(prev => ({ ...prev, content: false }));
     }
   }
 
@@ -645,10 +762,20 @@ export default function Docs() {
                                       <li className="leading-relaxed text-gray-300" {...props} />
                                     </div>
                                   ),
-                                  code: ({ node, inline, ...props }) => (
-                                    inline
-                                      ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props} />
-                                      : <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto"><code {...props} /></pre>
+                                  code: ({ node, inline, className, children, ...props }) => {
+                                    const match = /language-(\w+)/.exec(className || '');
+                                    const isMermaid = match && match[1] === 'mermaid';
+
+                                    if (isMermaid && !inline) {
+                                      return <Mermaid chart={String(children).replace(/\n$/, '')} />;
+                                    }
+
+                                    return inline
+                                      ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props}>{children}</code>
+                                      : <code className={className} {...props}>{children}</code>
+                                  },
+                                  pre: ({ node, ...props }) => (
+                                    <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto" {...props} />
                                   ),
                                 }}
                               >
@@ -729,6 +856,29 @@ export default function Docs() {
                         <h1 className="text-4xl font-bold text-white mb-2">{selectedFile?.split('/').pop()}</h1>
                         <p className="text-gray-500 text-lg">Automated analysis of {selectedFile}</p>
                         <div className="absolute right-0 top-0 flex gap-2">
+                          {!isEditing && (
+                            <div className="relative group">
+                              <Button size="sm" variant="outline" className="border-aurora-cyan/30 bg-aurora-cyan/5 text-aurora-cyan hover:bg-aurora-cyan hover:text-black transition-all rounded-xl">
+                                <Sparkles className="w-4 h-4 mr-2" /> Visual AI
+                              </Button>
+                              <div className="absolute top-full right-0 pt-2 opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-all z-50">
+                                <div className="w-48 bg-[#0A0C10] border border-white/[0.1] rounded-xl shadow-2xl overflow-hidden">
+                                  <button
+                                    onClick={() => generateDiagram('flowchart')}
+                                    className="w-full text-left px-4 py-3 text-[11px] font-mono text-gray-400 hover:text-white hover:bg-white/[0.05] border-b border-white/[0.05] transition-colors"
+                                  >
+                                    GENERATE FLOWCHART
+                                  </button>
+                                  <button
+                                    onClick={() => generateDiagram('sequence')}
+                                    className="w-full text-left px-4 py-3 text-[11px] font-mono text-gray-400 hover:text-white hover:bg-white/[0.05] transition-colors"
+                                  >
+                                    GENERATE SEQUENCE
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                           {isEditing ? (
                             <>
                               <Button size="sm" variant="ghost" className="text-gray-400 hover:text-white" onClick={() => { setIsEditing(false); setEditContent(docs); }}>
@@ -772,11 +922,18 @@ export default function Docs() {
                                   <li className="leading-relaxed text-gray-300" {...props} />
                                 </div>
                               ),
-                              code: ({ node, inline, ...props }) => (
-                                inline
-                                  ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props} />
-                                  : <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto"><code {...props} /></pre>
-                              ),
+                              code: ({ node, inline, className, children, ...props }) => {
+                                const match = /language-(\w+)/.exec(className || '');
+                                const isMermaid = match && match[1] === 'mermaid';
+
+                                if (isMermaid && !inline) {
+                                  return <Mermaid chart={String(children).replace(/\n$/, '')} />;
+                                }
+
+                                return inline
+                                  ? <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-aurora-cyan font-mono text-xs" {...props}>{children}</code>
+                                  : <pre className="my-4 p-4 rounded-lg bg-[#0A0C10] border border-white/[0.08] font-mono text-[13px] text-gray-300 overflow-x-auto"><code className={className} {...props}>{children}</code></pre>
+                              },
                             }}
                           >
                             {docs}

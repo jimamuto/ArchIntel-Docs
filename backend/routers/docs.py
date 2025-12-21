@@ -102,7 +102,18 @@ async def get_file_llm_documentation(
              db_response = supabase.table("file_documentation").select("content").eq("project_id", project_id).eq("file_path", path).execute()
              db_data = db_response.data if hasattr(db_response, 'data') else db_response["data"]
              if db_data and len(db_data) > 0:
-                 return db_data[0]["content"]
+                 content = db_data[0]["content"]
+                 # If it's a fallback placeholder or error message, ignore it and regenerate
+                 placeholders = [
+                     "Static Analysis Result", 
+                     "To get full AI synthesis", 
+                     "Automated structural report",
+                     "Error: Groq API",
+                     "Error: Gemini API"
+                 ]
+                 if not any(p in content for p in placeholders):
+                     return content
+                 print(f"DEBUG: Found placeholder in DB for {path}, bypassing cache...")
         except Exception:
             # If DB check fails (e.g. table doesn't exist yet), fall back to generation
             pass
@@ -162,6 +173,8 @@ As a Senior Software Architect, provide a deep technical analysis and documentat
 ### Formatting Rules:
 - Use clean, professional Markdown.
 - Use H2 for major sections and H3 for sub-points.
+- **Visuals**: Where complex logic or architecture exists, include a Mermaid diagram (using ```mermaid code block).
+  - **CRITICAL**: Enclose ALL labels in double quotes inside brackets, e.g., `A["My Label"]`. This is essential for parser stability.
 - Avoid generic headers like "Summary" or "Usage" unless they are part of a deeper analysis.
 - Do NOT include placeholders or generic "test" text.
 - Be concise but technically dense.
@@ -172,6 +185,39 @@ FILE CONTENT:
 ---
 """
         doc = generate_doc_with_groq(prompt)
+        
+        # 2. Save successfully generated doc back to DB if it's not a placeholder/error
+        placeholders = [
+            "Static Analysis Result", 
+            "To get full AI synthesis", 
+            "Automated structural report",
+            "Error: Groq API",
+            "Error: Gemini API"
+        ]
+        if not any(p in doc for p in placeholders) and not doc.startswith("Error:"):
+            try:
+                current_time = datetime.now().isoformat()
+                # Use upsert logic similar to update_file_documentation
+                existing = supabase.table("file_documentation").select("id").eq("project_id", project_id).eq("file_path", path).execute()
+                existing_data = existing.data if hasattr(existing, 'data') else existing["data"]
+                
+                if existing_data:
+                    supabase.table("file_documentation").update({
+                        "content": doc,
+                        "updated_at": current_time
+                    }).eq("id", existing_data[0]["id"]).execute()
+                else:
+                    supabase.table("file_documentation").insert({
+                        "project_id": project_id,
+                        "file_path": path,
+                        "content": doc,
+                        "created_at": current_time,
+                        "updated_at": current_time
+                    }).execute()
+                print(f"DEBUG: Automatically persisted fresh documentation for {path}")
+            except Exception as e:
+                print(f"DEBUG: Failed to auto-persist documentation: {e}")
+
         return doc
     except Exception as e:
         return f"Error generating documentation: {str(e)}"
@@ -182,6 +228,52 @@ FILE CONTENT:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:
                 pass
+
+@router.get("/{project_id}/file/diagram", response_class=PlainTextResponse)
+async def get_file_diagram(
+    project_id: str,
+    type: str = Query(..., description="Type of diagram: flowchart, sequence"),
+    path: str = Query(..., description="Relative path of the file"),
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    """
+    Generate a specific Mermaid diagram for a code file using Groq LLM.
+    """
+    try:
+        # Resolve repo path
+        if repo_path == ".":
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            repo_path_full = os.path.dirname(backend_dir)
+        elif repo_path.startswith("repos/"):
+            current_dir = os.path.dirname(__file__)
+            backend_dir = os.path.dirname(current_dir)
+            project_root = os.path.dirname(backend_dir)
+            repo_path_full = os.path.join(project_root, repo_path)
+        else:
+            repo_path_full = repo_path
+
+        abs_path = os.path.abspath(os.path.join(repo_path_full, path))
+        if not abs_path.startswith(os.path.abspath(repo_path_full)):
+            return "Error: Path security violation"
+
+        if not os.path.exists(abs_path):
+            return "Error: File not found"
+
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            code = f.read()
+
+        diagram_prompts = {
+            "flowchart": f"Generate a detailed Mermaid flowchart (graph TD) that explains the core logic flow of the following code. Focus on decision points and key processing steps. Output ONLY the mermaid code block wrapped in ```mermaid tags. **IMPORTANT**: Use double quotes for all labels, e.g., A[\"Action\"] --> B[\"Result\"].\n\nCODE:\n{code[:8000]}",
+            "sequence": f"Generate a detailed Mermaid sequence diagram that explains the interactions and calls within the following code. Document function calls, system interactions, and data flow. Output ONLY the mermaid code block wrapped in ```mermaid tags. **IMPORTANT**: Use double quotes for all participant names and messages.\n\nCODE:\n{code[:8000]}"
+        }
+
+        prompt = diagram_prompts.get(type, diagram_prompts["flowchart"])
+        diagram = generate_doc_with_groq(prompt)
+        return diagram
+
+    except Exception as e:
+        return f"Error generating diagram: {str(e)}"
 
 @router.get("/{project_id}/file/doc/download")
 async def download_file_llm_documentation(
@@ -240,6 +332,8 @@ As a Senior Software Architect, provide a deep technical analysis and documentat
 ### Formatting Rules:
 - Use clean, professional Markdown.
 - Use H2 for major sections and H3 for sub-points.
+- **Visuals**: Where complex logic or architecture exists, include a Mermaid diagram (using ```mermaid code block).
+  - **CRITICAL**: Enclose ALL labels in double quotes inside brackets, e.g., `A["My Label"]`. This is essential for parser stability.
 - Avoid generic headers like "Summary" or "Usage" unless they are part of a deeper analysis.
 - Do NOT include placeholders or generic "test" text.
 - Be concise but technically dense.
@@ -422,9 +516,13 @@ async def get_system_documentation(
         if not code_files:
             return "Error: No code files found in the repository"
 
+        stack_info = ', '.join([f"{lang}: {count}" for lang, count in language_stats.items()])
+        structural_map = ', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))
+        samples = "\n".join([f"Path: {path}\nSnippet: {content[:1000]}" for path, content in list(file_contents.items())[:5]])
+
         # Generate comprehensive system documentation with a System Design focus
         system_prompt = f"""
-As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {{project['name']}} project. 
+As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {project['name']} project. 
 
 Generate a professional **System Design Document (SDD)** that analyzes the codebase's intent, patterns, and trade-offs. 
 
@@ -440,18 +538,21 @@ Generate a professional **System Design Document (SDD)** that analyzes the codeb
 ### Formatting Rules:
 - Use clean, hierarchical Markdown.
 - Use H2 for major domains and H3 for component-level details.
+- **Visuals**: Provide at least one strategic Mermaid diagram (system overview or primary data flow) using ```mermaid syntax.
+  - **CRITICAL**: Enclose ALL labels in double quotes inside brackets, e.g., `A["My Label"]`. 
+  - **IDs**: Use short, simple alphanumeric IDs for nodes (e.g., `A`, `B1`, `ServiceA`). Avoid spaces or special characters in IDs.
 - Use bulleted lists for technical debt or potential improvements.
 - Avoid generic lists; focus on architecturally significant details.
 
 ---
 CODEBASE STATISTICS:
-- Total files: {{len(code_files)}}
-- Stack Breakdown: {{', '.join([f'{{lang}}: {{count}}' for lang, count in language_stats.items()])}}
-- Structural Map: {{', '.join(set(os.path.dirname(f['path']) for f in code_files if '/' in f['path']))}}
+- Total files: {len(code_files)}
+- Stack Breakdown: {stack_info}
+- Structural Map: {structural_map}
 
 ---
 CONTEXTUAL SAMPLES (Sampled from key files):
-{{chr(10).join([f"Path: {{path}}{{chr(10)}}Snippet: {{content[:1000]}}" for path, content in list(file_contents.items())[:5]])}}
+{samples}
 ---
 """
 
@@ -588,9 +689,11 @@ async def download_system_documentation(
             # Add snippet for context (limited)
             full_context += f"\n--- {path} ---\n{content[:1500]}\n"
 
+        structure_analysis = "\n".join(system_structure)
+
         # Generate comprehensive system documentation with System Design focus
         system_prompt = f"""
-As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {{project['name']}} project. 
+As a Principal Systems Architect, perform a comprehensive reverse-engineered analysis of the {project['name']} project. 
 
 Generate a professional **System Design Document (SDD)** that analyzes the codebase's intent, patterns, and trade-offs. 
 
@@ -606,16 +709,19 @@ Generate a professional **System Design Document (SDD)** that analyzes the codeb
 ### Formatting Rules:
 - Use clean, hierarchical Markdown.
 - Use H2 for major domains and H3 for component-level details.
+- **Visuals**: Provide at least one strategic Mermaid diagram (system overview or primary data flow) using ```mermaid syntax.
+  - **CRITICAL**: Enclose ALL labels in double quotes inside brackets, e.g., `A["My Label"]`. 
+  - **IDs**: Use short, simple alphanumeric IDs for nodes (e.g., `A`, `B1`, `ServiceA`). Avoid spaces or special characters in IDs.
 - Use bulleted lists for technical debt or potential improvements.
 - Avoid generic lists; focus on architecturally significant details.
 
 ---
 SYSTEM STRUCTURE ANALYSIS:
-{{chr(10).join(system_structure)}}
+{structure_analysis}
 
 ---
 SOURCE CODE CONTEXT:
-{{full_context[:12000]}} 
+{full_context[:12000]} 
 ---
 """
 
