@@ -16,6 +16,7 @@ from datetime import datetime
 router = APIRouter()
 
 from llm_groq import generate_doc_with_groq
+from services.git_service import GitHistoryService
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -23,29 +24,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
-@router.get("/{project_id}")
-def get_docs(project_id: str, file: str = Query(None)):
-    if not file:
-        return {"docs": []}
+@router.get("/test")
+def test_route():
+    return {"status": "ok", "message": "Docs router is live"}
 
-    try:
-        # Get file information from database
-        response = supabase.table("files").select("id, path, language").eq("project_id", project_id).eq("path", file).execute()
-        files = response.data if hasattr(response, 'data') else response["data"]
-
-        if not files:
-            raise HTTPException(status_code=404, detail="File not found")
-
-        file_info = files[0]
-        language = file_info.get("language", "unknown")
-
-        # Generate documentation based on file type and content
-        docs_content = generate_file_documentation(file, language, project_id)
-
-        return {"docs": docs_content}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 class DocUpdate(BaseModel):
     path: str
@@ -85,6 +67,26 @@ def update_file_documentation(project_id: str, doc_update: DocUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def resolve_repo_path(repo_path: str) -> str:
+    """
+    Resolves the provided repo_path to an absolute path on the filesystem.
+    Handles '.' for the project root and 'repos/' for cloned repositories.
+    """
+    if repo_path == ".":
+        # Current directory (project root)
+        current_dir = os.path.dirname(__file__)  # backend/routers/
+        backend_dir = os.path.dirname(current_dir)  # backend/
+        return os.path.dirname(backend_dir)  # project root
+    
+    if repo_path.startswith("repos/"):
+        # Backend is in backend/routers/ directory, so go up three levels to project root
+        current_dir = os.path.dirname(__file__)  # backend/routers/
+        backend_dir = os.path.dirname(current_dir)  # backend/
+        project_root = os.path.dirname(backend_dir)  # project root
+        return os.path.join(project_root, repo_path)
+    
+    return repo_path
+
 @router.get("/{project_id}/file/doc", response_class=PlainTextResponse)
 async def get_file_llm_documentation(
     project_id: str,
@@ -121,20 +123,7 @@ async def get_file_llm_documentation(
         if not repo_path:
             return "Error: Repository path not provided"
 
-        # Handle different repo_path formats
-        if repo_path == ".":
-            # Current directory (project root)
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            repo_path_full = os.path.dirname(backend_dir)  # project root
-        elif repo_path.startswith("repos/"):
-            # Backend is in backend/routers/ directory, so go up three levels to project root
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            project_root = os.path.dirname(backend_dir)  # project root
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         abs_path = os.path.abspath(os.path.join(repo_path_full, path))
         # Security: Ensure abs_path is within repo_path
@@ -240,18 +229,7 @@ async def get_file_diagram(
     Generate a specific Mermaid diagram for a code file using Groq LLM.
     """
     try:
-        # Resolve repo path
-        if repo_path == ".":
-            current_dir = os.path.dirname(__file__)
-            backend_dir = os.path.dirname(current_dir)
-            repo_path_full = os.path.dirname(backend_dir)
-        elif repo_path.startswith("repos/"):
-            current_dir = os.path.dirname(__file__)
-            backend_dir = os.path.dirname(current_dir)
-            project_root = os.path.dirname(backend_dir)
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         abs_path = os.path.abspath(os.path.join(repo_path_full, path))
         if not abs_path.startswith(os.path.abspath(repo_path_full)):
@@ -289,20 +267,7 @@ async def download_file_llm_documentation(
         if not repo_path:
             raise HTTPException(status_code=400, detail="Repository path not provided")
 
-        # Handle different repo_path formats
-        if repo_path == ".":
-            # Current directory (project root)
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            repo_path_full = os.path.dirname(backend_dir)  # project root
-        elif repo_path.startswith("repos/"):
-            # Backend is in backend/routers/ directory, so go up three levels to project root
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            project_root = os.path.dirname(backend_dir)  # project root
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         abs_path = os.path.abspath(os.path.join(repo_path_full, path))
         # Security: Ensure abs_path is within repo_path
@@ -431,20 +396,7 @@ async def get_system_documentation(
         project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
         project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
 
-        # Handle different repo_path formats
-        if repo_path == ".":
-            # Current directory (project root)
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            repo_path_full = os.path.dirname(backend_dir)  # project root
-        elif repo_path.startswith("repos/"):
-            # Backend is in backend/routers/ directory, so go up three levels to project root
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            project_root = os.path.dirname(backend_dir)  # project root
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         # Check if repo_path exists locally
         if not os.path.exists(repo_path_full):
@@ -585,20 +537,7 @@ async def download_system_documentation(
         project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
         project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
 
-        # Handle different repo_path formats
-        if repo_path == ".":
-            # Current directory (project root)
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            repo_path_full = os.path.dirname(backend_dir)  # project root
-        elif repo_path.startswith("repos/"):
-            # Backend is in backend/routers/ directory, so go up three levels to project root
-            current_dir = os.path.dirname(__file__)  # backend/routers/
-            backend_dir = os.path.dirname(current_dir)  # backend/
-            project_root = os.path.dirname(backend_dir)  # project root
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         if not os.path.exists(repo_path_full):
             raise HTTPException(status_code=404, detail=f"Repository not found locally - {repo_path}")
@@ -1018,18 +957,7 @@ async def get_project_graph(project_id: str, repo_path: str = Query(..., descrip
     Edges: Imports/Dependencies
     """
     try:
-        # Handle repo path (copied from system doc)
-        if repo_path == ".":
-            current_dir = os.path.dirname(__file__)
-            backend_dir = os.path.dirname(current_dir)
-            repo_path_full = os.path.dirname(backend_dir)
-        elif repo_path.startswith("repos/"):
-            current_dir = os.path.dirname(__file__)
-            backend_dir = os.path.dirname(current_dir)
-            project_root = os.path.dirname(backend_dir)
-            repo_path_full = os.path.join(project_root, repo_path)
-        else:
-            repo_path_full = repo_path
+        repo_path_full = resolve_repo_path(repo_path)
 
         if not os.path.exists(repo_path_full):
             raise HTTPException(status_code=404, detail="Repo not found locally")
@@ -1136,5 +1064,148 @@ Output strictly markdown.
 """
         response = generate_doc_with_groq(prompt)
         return {"response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/history/diff")
+async def get_commit_diff(
+    project_id: str,
+    commit_hash: str = Query(..., description="Commit hash to get diff for"),
+    file_path: Optional[str] = Query(None, description="Optional specific file path"),
+    repo_path: str = Query(..., description="Local path to the repository")
+):
+    """Get the raw unified diff for a specific commit."""
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        if not os.path.exists(repo_path_full):
+            raise HTTPException(status_code=404, detail="Repository path not found")
+        
+        diff = GitHistoryService.get_commit_diff(repo_path_full, commit_hash, file_path)
+        return {"diff": diff}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/history/stats")
+async def get_author_stats(
+    project_id: str,
+    path: Optional[str] = Query(None, description="Optional file or folder path"),
+    repo_path: str = Query(..., description="Local path to the repository")
+):
+    """Get aggregated author statistics for a path or the whole project."""
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        if not os.path.exists(repo_path_full):
+            raise HTTPException(status_code=404, detail="Repository path not found")
+        
+        stats = GitHistoryService.get_author_stats(repo_path_full, path)
+        return {"stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}/history/{file_path:path}")
+async def get_file_history(
+    project_id: str,
+    file_path: str,
+    repo_path: str = Query(..., description="Local path to the repository"),
+    limit: int = Query(50, description="Maximum number of commits to return")
+):
+    """
+    Get Git commit history for a specific file.
+    Returns list of commits that affected the file with metadata and changes.
+    """
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        # Validate repo path exists
+        if not os.path.exists(repo_path_full):
+            raise HTTPException(status_code=404, detail="Repository path not found")
+        
+        # Get commit history using GitHistoryService
+        commits = GitHistoryService.get_file_history(repo_path_full, file_path, limit)
+        
+        return {
+            "file": file_path,
+            "commits": commits,
+            "total": len(commits)
+        }
+    
+    except Exception as e:
+        print(f"Error fetching file history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SearchRequest(BaseModel):
+    query: str
+
+@router.post("/{project_id}/search")
+async def search_docs(project_id: str, request: SearchRequest):
+    """
+    Search for files by path and documentation by content.
+    Returns matching files and documentation snippets.
+    """
+    try:
+        query = request.query.lower()
+        if not query:
+            return {"files": [], "documentation": []}
+
+        # 1. Search Files table (by path)
+        # Supabase ilike search
+        files_res = supabase.table("files").select("id, path, language").eq("project_id", project_id).ilike("path", f"%{query}%").execute()
+        files = files_res.data if hasattr(files_res, 'data') else files_res["data"]
+
+        # 2. Search file_documentation table (by content)
+        docs_res = supabase.table("file_documentation").select("file_path, content").eq("project_id", project_id).ilike("content", f"%{query}%").execute()
+        docs_data = docs_res.data if hasattr(docs_res, 'data') else docs_res["data"]
+
+        # Process documentation results to create snippets
+        doc_results = []
+        for doc in docs_data:
+            content = doc["content"]
+            file_path = doc["file_path"]
+            
+            # Find snippet around the query
+            idx = content.lower().find(query)
+            if idx != -1:
+                start = max(0, idx - 100)
+                end = min(len(content), idx + 200)
+                snippet = content[start:end]
+                # Clean up snippet
+                if start > 0: snippet = "..." + snippet
+                if end < len(content): snippet = snippet + "..."
+                
+                doc_results.append({
+                    "path": file_path,
+                    "snippet": snippet
+                })
+
+        return {
+            "files": files,
+            "documentation": doc_results
+        }
+
+    except Exception as e:
+        print(f"Error in search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{project_id}")
+def get_docs(project_id: str, file: str = Query(None)):
+    if not file:
+        return {"docs": []}
+
+    try:
+        # Get file information from database
+        response = supabase.table("files").select("id, path, language").eq("project_id", project_id).eq("path", file).execute()
+        files = response.data if hasattr(response, 'data') else response["data"]
+
+        if not files:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        file_info = files[0]
+        language = file_info.get("language", "unknown")
+
+        # Generate documentation based on file type and content
+        docs_content = generate_file_documentation(file, language, project_id)
+
+        return {"docs": docs_content}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

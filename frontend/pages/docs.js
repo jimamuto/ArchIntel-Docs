@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { Button } from '../components/ui/button';
 import { ScrollArea } from '../components/ui/scroll-area';
@@ -26,7 +26,8 @@ import {
   Edit2,
   Save,
   Ban,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Link from 'next/link';
@@ -161,7 +162,85 @@ export default function Docs() {
 
   const [expandedFolders, setExpandedFolders] = useState(new Set());
   const [isEditing, setIsEditing] = useState(false);
+  const [fileSearchQuery, setFileSearchQuery] = useState('');
   const [editContent, setEditContent] = useState('');
+
+
+  // History Tab State
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState({ author: '', dateFrom: '', dateTo: '' });
+  const [expandedCommits, setExpandedCommits] = useState(new Set());
+  const [commits, setCommits] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [authorStats, setAuthorStats] = useState([]);
+  const [commitDiffs, setCommitDiffs] = useState({}); // { commitHash: diffText }
+  const [loadingDiff, setLoadingDiff] = useState(null); // commitHash
+
+  // Fetch Git history when History tab is opened
+  useEffect(() => {
+    if (showHistory && selectedFile && selectedProjectData) {
+      fetchFileHistory();
+      fetchAuthorStats();
+    }
+  }, [showHistory, selectedFile]);
+
+  const fetchFileHistory = async () => {
+    if (!selectedFile || !selectedProjectData) return;
+
+    setLoadingHistory(true);
+    try {
+      const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+      let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/${selectedFile}?repo_path=${encodeURIComponent(repoPath)}`;
+
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        setCommits(data.commits || []);
+      }
+    } catch (error) {
+      console.error('Error fetching file history:', error);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const fetchAuthorStats = async () => {
+    if (!selectedFile || !selectedProjectData) return;
+    try {
+      const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+      let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/stats?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        setAuthorStats(data.stats || []);
+      }
+    } catch (error) {
+      console.error('Error fetching author stats:', error);
+    }
+  };
+
+  const fetchCommitDiff = async (commitHash) => {
+    if (commitDiffs[commitHash] || !selectedProjectData) return;
+
+    setLoadingDiff(commitHash);
+    try {
+      const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
+      let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
+      const url = `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/history/diff?commit_hash=${commitHash}&file_path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`;
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        setCommitDiffs(prev => ({ ...prev, [commitHash]: data.diff }));
+      }
+    } catch (error) {
+      console.error('Error fetching commit diff:', error);
+    } finally {
+      setLoadingDiff(null);
+    }
+  };
+
 
   // MVP Features State
   const [showSearch, setShowSearch] = useState(false);
@@ -169,7 +248,48 @@ export default function Docs() {
   const [queryResponse, setQueryResponse] = useState('');
   const [isQuerying, setIsQuerying] = useState(false);
   const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+  const [searchResults, setSearchResults] = useState({ files: [], documentation: [] });
   const [viewMode, setViewMode] = useState('doc'); // 'doc' or 'graph'
+  const [sidebarWidth, setSidebarWidth] = useState(288);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Initialize sidebar width from localStorage
+  useEffect(() => {
+    const savedWidth = localStorage.getItem('archintel_sidebar_width');
+    if (savedWidth) {
+      setSidebarWidth(parseInt(savedWidth, 10));
+    }
+  }, []);
+
+  const handleMouseDown = (e) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(200, Math.min(600, e.clientX));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false);
+        localStorage.setItem('archintel_sidebar_width', sidebarWidth.toString());
+      }
+    };
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, sidebarWidth]);
 
   // Shortcut for Command Palette
   useEffect(() => {
@@ -189,19 +309,33 @@ export default function Docs() {
 
     setIsQuerying(true);
     setQueryResponse('');
+    setSearchResults({ files: [], documentation: [] });
+
     try {
+      // 1. Perform Neural Query (AI)
       const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
       let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/query`, {
+      const aiPromise = fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, repo_path: repoPath })
-      });
-      const data = await res.json();
-      setQueryResponse(data.response);
+      }).then(res => res.json());
+
+      // 2. Perform Keyword Search
+      const searchPromise = fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      }).then(res => res.json());
+
+      const [aiData, searchData] = await Promise.all([aiPromise, searchPromise]);
+
+      setQueryResponse(aiData.response);
+      setSearchResults(searchData);
     } catch (err) {
-      setQueryResponse('Error connecting to architecture node.');
+      console.error("Search error:", err);
+      setQueryResponse('Error connecting to intelligence nodes.');
     } finally {
       setIsQuerying(false);
     }
@@ -369,9 +503,30 @@ export default function Docs() {
 
   // Handle file selection
   useEffect(() => {
-    if (!selectedProject || !selectedFile) return;
+    if (!selectedProject || !selectedFile || !selectedProjectData) return;
 
     async function fetchFileContent() {
+      // Find if selected path is a folder in the tree
+      const tree = getFileStructure();
+      const parts = selectedFile.split('/');
+      let current = tree;
+      let isFolder = false;
+      for (let i = 0; i < parts.length; i++) {
+        if (current[parts[i]]) {
+          if (i === parts.length - 1) {
+            isFolder = current[parts[i]].isFolder;
+          }
+          current = current[parts[i]].children;
+        }
+      }
+
+      if (isFolder) {
+        setDocs(null);
+        setCode(null);
+        setLoading(prev => ({ ...prev, content: false }));
+        return;
+      }
+
       setLoading(prev => ({ ...prev, content: true }));
       setError(null);
       try {
@@ -399,7 +554,39 @@ export default function Docs() {
     }
 
     fetchFileContent();
-  }, [selectedProject, selectedFile, selectedProjectData]);
+  }, [selectedProject, selectedFile]);
+
+  const isSelectedPathFolder = () => {
+    if (!selectedFile) return false;
+    const tree = getFileStructure();
+    const parts = selectedFile.split('/');
+    let current = tree;
+    for (let i = 0; i < parts.length; i++) {
+      if (current[parts[i]]) {
+        if (i === parts.length - 1) return current[parts[i]].isFolder;
+        current = current[parts[i]].children;
+      }
+    }
+    return false;
+  };
+
+  const getFolderContents = (path) => {
+    if (!path) return [];
+    const tree = getFileStructure();
+    const parts = path.split('/');
+    let current = tree;
+    for (const part of parts) {
+      if (current[part]) {
+        current = current[part].children;
+      } else {
+        return [];
+      }
+    }
+    return Object.entries(current).map(([name, data]) => ({
+      name,
+      ...data
+    }));
+  };
 
   const toggleFolder = (path) => {
     const newExpanded = new Set(expandedFolders);
@@ -413,12 +600,24 @@ export default function Docs() {
 
   const getFileStructure = () => {
     const tree = {};
-    structure.forEach(file => {
-      const parts = file.path.split('/');
+    const query = fileSearchQuery.toLowerCase();
+
+    // Filter structure based on query
+    const filteredStructure = query
+      ? structure.filter(f => f.path.toLowerCase().includes(query))
+      : structure;
+
+    filteredStructure.forEach(file => {
+      // Split by either forward slash or backslash for cross-platform robustness
+      const parts = file.path.split(/[/\\]/);
       let current = tree;
       parts.forEach((part, index) => {
         if (!current[part]) {
-          current[part] = { isFolder: index < parts.length - 1, children: {} };
+          current[part] = {
+            isFolder: index < parts.length - 1,
+            children: {},
+            fullPath: parts.slice(0, index + 1).join('/')
+          };
         }
         current = current[part].children;
       });
@@ -432,22 +631,31 @@ export default function Docs() {
       const isSelected = selectedFile === currentPath;
 
       if (data.isFolder) {
-        const isExpanded = expandedFolders.has(currentPath);
+        // Automatically expand if we're searching
+        const isExpanded = expandedFolders.has(currentPath) || (fileSearchQuery && Object.keys(data.children).length > 0);
+        const isFolderSelected = selectedFile === currentPath;
+
         return (
           <div key={currentPath} className="select-none">
-            <button
-              onClick={() => toggleFolder(currentPath)}
-              className={cn(
-                "w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] transition-colors rounded-sm group",
-                isExpanded ? "text-white" : "text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]"
-              )}
-            >
-              <div className="text-gray-600 group-hover:text-gray-400">
+            <div className={cn(
+              "w-full flex items-center gap-1.5 px-3 py-1.5 text-[13px] transition-colors rounded-sm group",
+              isFolderSelected ? "bg-aurora-purple/10 text-aurora-purple" : (isExpanded ? "text-white" : "text-gray-400 hover:text-gray-200 hover:bg-white/[0.04]")
+            )}>
+              <button
+                onClick={(e) => { e.stopPropagation(); toggleFolder(currentPath); }}
+                className="text-gray-600 hover:text-gray-400 p-0.5 rounded transition-colors"
+                title={isExpanded ? "Collapse" : "Expand"}
+              >
                 {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-              </div>
-              <FolderTree className={cn("w-3.5 h-3.5 transition-colors", isExpanded ? "text-aurora-purple" : "text-gray-500 group-hover:text-aurora-purple/70")} />
-              <span className="truncate font-medium">{name}</span>
-            </button>
+              </button>
+              <button
+                onClick={() => setSelectedFile(currentPath)}
+                className="flex items-center gap-1.5 flex-1 truncate text-left"
+              >
+                <FolderTree className={cn("w-3.5 h-3.5 transition-colors", isExpanded || isFolderSelected ? "text-aurora-purple" : "text-gray-500 group-hover:text-aurora-purple/70")} />
+                <span className="truncate font-medium">{name}</span>
+              </button>
+            </div>
             {isExpanded && (
               <div className="ml-3 pl-3 border-l border-white/[0.05]">
                 {renderFileTree(data.children, currentPath)}
@@ -463,11 +671,11 @@ export default function Docs() {
             className={cn(
               "w-full flex items-center gap-2 px-3 py-1.5 text-[13px] ml-3 transition-colors rounded-r-md border-l-2",
               isSelected
-                ? "bg-aurora-purple/10 text-aurora-purple border-aurora-purple"
+                ? "bg-aurora-cyan/10 text-aurora-cyan border-aurora-cyan"
                 : "border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/[0.02]"
             )}
           >
-            <File className="w-3.5 h-3.5 opacity-70" />
+            <FileText className="w-3.5 h-3.5 opacity-70" />
             <span className="truncate font-mono">{name}</span>
           </button>
         );
@@ -556,10 +764,37 @@ export default function Docs() {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Component-Based Sidebar (File Explorer) */}
-        <aside className="w-72 bg-[#0A0C10] border-r border-aurora-border flex flex-col relative z-10">
+        <aside
+          className="bg-[#0A0C10] border-r border-aurora-border flex flex-col relative z-10"
+          style={{ width: `${sidebarWidth}px` }}
+        >
           <div className="py-2 px-4 shadow-[0_1px_0_0_rgba(255,255,255,0.02)]">
             <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 font-mono">Project Files</span>
           </div>
+
+          {/* File Search */}
+          {selectedProject && structure.length > 0 && (
+            <div className="px-3 py-2 border-b border-white/[0.05]">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+                <input
+                  type="text"
+                  placeholder="Search files..."
+                  value={fileSearchQuery}
+                  onChange={(e) => setFileSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-[#15171B] border border-white/[0.08] rounded-lg text-gray-300 placeholder:text-gray-600 focus:outline-none focus:border-aurora-cyan/50 focus:ring-1 focus:ring-aurora-cyan/20"
+                />
+                {fileSearchQuery && (
+                  <button
+                    onClick={() => setFileSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           <ScrollArea className="flex-1">
             {!selectedProject ? (
@@ -604,6 +839,15 @@ export default function Docs() {
             )}
           </ScrollArea>
         </aside>
+
+        {/* Resize Handle */}
+        <div
+          onMouseDown={handleMouseDown}
+          className={cn(
+            "w-1 bg-[#1A1D23] hover:bg-aurora-purple/50 cursor-col-resize transition-colors z-20 relative",
+            isResizing && "bg-aurora-purple shadow-[0_0_10px_rgba(168,85,247,0.5)]"
+          )}
+        />
 
         {/* Main Workspace */}
         <main className="flex-1 flex flex-col bg-[#0F1117] relative isolate">
@@ -667,10 +911,10 @@ export default function Docs() {
               {/* Workspace Tabs */}
               <div className="h-11 border-b border-aurora-border flex items-end px-4 gap-1 bg-[#0A0C10]/50 backdrop-blur-sm z-20">
                 <button
-                  onClick={() => { setShowCode(false); setShowSystemDoc(false); setIsEditing(false); }}
+                  onClick={() => { setShowCode(false); setShowSystemDoc(false); setShowHistory(false); setIsEditing(false); }}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 text-xs font-medium border-t border-l border-r rounded-t-lg transition-all relative top-[1px]",
-                    !showCode && !showSystemDoc
+                    !showCode && !showSystemDoc && !showHistory
                       ? "bg-[#0F1117] border-aurora-border text-aurora-cyan shadow-sm z-10"
                       : "border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/[0.02]"
                   )}
@@ -678,7 +922,7 @@ export default function Docs() {
                   <FileText className="w-3.5 h-3.5" /> Documentation
                 </button>
                 <button
-                  onClick={() => { setShowCode(true); setShowSystemDoc(false); }}
+                  onClick={() => { setShowCode(true); setShowSystemDoc(false); setShowHistory(false); }}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 text-xs font-medium border-t border-l border-r rounded-t-lg transition-all relative top-[1px]",
                     showCode
@@ -687,6 +931,17 @@ export default function Docs() {
                   )}
                 >
                   <Code2 className="w-3.5 h-3.5" /> Source Code
+                </button>
+                <button
+                  onClick={() => { setShowHistory(true); setShowCode(false); setShowSystemDoc(false); }}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 text-xs font-medium border-t border-l border-r rounded-t-lg transition-all relative top-[1px]",
+                    showHistory
+                      ? "bg-[#0F1117] border-aurora-border text-green-400 shadow-sm z-10"
+                      : "border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/[0.02]"
+                  )}
+                >
+                  <Activity className="w-3.5 h-3.5" /> History
                 </button>
                 <button
                   onClick={() => fetchSystemDoc()}
@@ -701,12 +956,87 @@ export default function Docs() {
                 </button>
 
                 <div className="flex-1 border-b border-aurora-border" />
+
+                {selectedFile && selectedProjectData && (
+                  <div className="pb-2 pr-4">
+                    <a
+                      href={`${selectedProjectData.repo_url.replace('.git', '')}/${isSelectedPathFolder() ? 'tree' : 'blob'}/main/${selectedFile}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-white/[0.03] border border-white/[0.08] text-[10px] font-mono text-gray-400 hover:text-white hover:bg-white/[0.08] transition-all"
+                    >
+                      <Share2 className="w-3 h-3" />
+                      View on GitHub
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Breadcrumbs */}
+              <div className="px-8 lg:px-12 pt-6 flex items-center gap-2 text-[11px] font-mono text-gray-500">
+                <button
+                  onClick={() => setSelectedFile(null)}
+                  className="hover:text-aurora-cyan transition-colors"
+                >
+                  <Database className="w-3 h-3 inline mr-1" />
+                  {selectedProjectData?.name}
+                </button>
+                {selectedFile?.split('/').map((part, i, arr) => (
+                  <React.Fragment key={i}>
+                    <ChevronRight className="w-3 h-3 text-gray-700" />
+                    <button
+                      onClick={() => setSelectedFile(arr.slice(0, i + 1).join('/'))}
+                      className={cn(
+                        "hover:text-white transition-colors",
+                        i === arr.length - 1 && "text-gray-300 font-bold"
+                      )}
+                    >
+                      {part}
+                    </button>
+                  </React.Fragment>
+                ))}
               </div>
 
               {/* Content Panel */}
               <div className="flex-1 overflow-y-auto p-8 lg:p-12 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
                 <div className="max-w-5xl mx-auto">
-                  {loading.content ? (
+                  {isSelectedPathFolder() ? (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div>
+                        <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
+                          <FolderTree className="w-8 h-8 text-aurora-purple" />
+                          {selectedFile.split('/').pop()}
+                        </h1>
+                        <p className="text-gray-500 font-mono text-xs">{selectedFile}</p>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {getFolderContents(selectedFile).map((item, i) => (
+                          <button
+                            key={i}
+                            onClick={() => {
+                              setSelectedFile(item.fullPath);
+                              if (item.isFolder) toggleFolder(item.fullPath);
+                            }}
+                            className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-aurora-purple/30 hover:bg-white/[0.04] transition-all text-left flex items-center gap-4 group"
+                          >
+                            <div className={cn(
+                              "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                              item.isFolder ? "bg-aurora-purple/10 text-aurora-purple group-hover:bg-aurora-purple/20" : "bg-aurora-cyan/10 text-aurora-cyan group-hover:bg-aurora-cyan/20"
+                            )}>
+                              {item.isFolder ? <FolderTree className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                            </div>
+                            <div className="truncate">
+                              <p className="text-sm font-bold text-gray-200 truncate">{item.name}</p>
+                              <p className="text-[10px] text-gray-500 font-mono italic">
+                                {item.isFolder ? 'Directory' : 'Source File'}
+                              </p>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : loading.content ? (
                     <div className="space-y-6 animate-pulse p-4">
                       <div className="h-8 w-1/3 bg-white/[0.05] rounded-lg" />
                       <div className="space-y-3 pt-4">
@@ -826,6 +1156,227 @@ export default function Docs() {
                         </div>
                       )}
                     </article>
+                  ) : showHistory ? (
+                    // --- History View ---
+                    <div className="space-y-6">
+                      {/* Header */}
+                      <div className="bg-gradient-to-br from-green-500/10 to-transparent border border-green-500/20 rounded-xl p-6">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h2 className="text-xl font-bold text-white mb-1">File History</h2>
+                            <p className="text-sm text-gray-400">Git commit timeline for {selectedFile}</p>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <Activity className="w-4 h-4" />
+                            <span>{commits.length} commits</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* History Header & Stats */}
+                      <div className="flex flex-col gap-6">
+                        <div className="flex items-center justify-between">
+                          <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+                            <Activity className="w-8 h-8 text-green-500" />
+                            History Timeline
+                          </h1>
+                          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/5 border border-green-500/10">
+                            <code className="text-[10px] text-green-500 font-mono uppercase font-bold tracking-widest">
+                              {commits.length} commits traced
+                            </code>
+                          </div>
+                        </div>
+
+                        {/* Author Stats Mini-Dashboard */}
+                        {authorStats.length > 0 && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-3 block">Top Contributors</span>
+                              <div className="space-y-3">
+                                {authorStats.slice(0, 3).map((stat, i) => (
+                                  <div key={i} className="space-y-1">
+                                    <div className="flex justify-between text-xs">
+                                      <span className="text-gray-300 font-medium">{stat.name}</span>
+                                      <span className="text-gray-500">{stat.commits} commits</span>
+                                    </div>
+                                    <div className="h-1.5 w-full bg-white/[0.05] rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-green-500/50 rounded-full"
+                                        style={{ width: `${(stat.commits / authorStats[0].commits) * 100}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] flex flex-col justify-center">
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 block">Code Churn</span>
+                              <div className="flex items-end gap-1 mb-1">
+                                <span className="text-2xl font-bold text-white">
+                                  {authorStats.reduce((acc, s) => acc + s.additions + s.deletions, 0).toLocaleString()}
+                                </span>
+                                <span className="text-[10px] text-gray-500 font-mono mb-1.5 uppercase">lines modified</span>
+                              </div>
+                              <p className="text-[11px] text-gray-600 leading-relaxed italic">
+                                Analysis based on target path metadata and git logs.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex gap-3 items-center p-4 bg-[#0A0C10]/50 border border-white/[0.05] rounded-xl">
+                          <input
+                            type="text"
+                            placeholder="Filter by author..."
+                            className="flex-1 bg-[#15171B] border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-gray-300 focus:outline-none focus:border-green-500/50 focus:ring-1 focus:ring-green-500/20"
+                            value={historyFilter.author}
+                            onChange={(e) => setHistoryFilter({ ...historyFilter, author: e.target.value })}
+                          />
+                          <div className="h-4 w-px bg-white/[0.05]" />
+                          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-tighter">Timeline Focus</span>
+                        </div>
+                      </div>
+
+                      {/* Timeline */}
+                      <div className="relative">
+                        {/* Vertical line */}
+                        <div className="absolute left-6 top-0 bottom-0 w-px bg-gradient-to-b from-green-500/50 via-green-500/20 to-transparent" />
+
+                        {/* Loading State */}
+                        {loadingHistory ? (
+                          <div className="flex flex-col items-center justify-center py-12">
+                            <Loader2 className="w-8 h-8 text-green-400 animate-spin mb-3" />
+                            <p className="text-sm text-gray-400">Loading commit history...</p>
+                          </div>
+                        ) : commits.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-12">
+                            <Activity className="w-12 h-12 text-gray-600 mb-3" />
+                            <p className="text-sm text-gray-400">No commit history found for this file</p>
+                            <p className="text-xs text-gray-600 mt-1">This file may not be tracked by Git</p>
+                          </div>
+                        ) : (
+                          /* Commits */
+                          <div className="space-y-6">
+                            {commits
+                              .filter(commit => {
+                                if (historyFilter.author && !commit.author.toLowerCase().includes(historyFilter.author.toLowerCase())) return false;
+                                return true;
+                              })
+                              .map((commit, index) => {
+                                const isExpanded = expandedCommits.has(commit.id);
+                                const commitDate = new Date(commit.date);
+
+                                return (
+                                  <div key={commit.id} className="relative pl-16">
+                                    {/* Timeline dot */}
+                                    <div className="absolute left-[21px] top-6 w-3 h-3 rounded-full bg-green-500 border-2 border-[#0F1117] shadow-lg shadow-green-500/50" />
+
+                                    {/* Commit card */}
+                                    <div className={cn(
+                                      "bg-[#0A0C10] border rounded-xl overflow-hidden transition-all",
+                                      isExpanded ? "border-green-500/30" : "border-white/[0.05] hover:border-white/[0.1]"
+                                    )}>
+                                      <button
+                                        onClick={() => {
+                                          const newExpanded = new Set(expandedCommits);
+                                          if (isExpanded) {
+                                            newExpanded.delete(commit.id);
+                                          } else {
+                                            newExpanded.add(commit.id);
+                                          }
+                                          setExpandedCommits(newExpanded);
+                                        }}
+                                        className="w-full p-4 text-left hover:bg-white/[0.02] transition-colors"
+                                      >
+                                        <div className="flex items-start justify-between gap-4">
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-2">
+                                              <code className="px-2 py-0.5 rounded bg-white/[0.05] border border-white/[0.1] text-green-400 font-mono text-xs">
+                                                {commit.hash}
+                                              </code>
+                                              <span className="text-xs text-gray-500">
+                                                {commitDate.toLocaleDateString()} at {commitDate.toLocaleTimeString()}
+                                              </span>
+                                            </div>
+                                            <p className="text-sm text-white font-medium mb-1">{commit.message}</p>
+                                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                                              <span>{commit.author}</span>
+                                              <span>•</span>
+                                              <span>{commit.filesChanged} files</span>
+                                              <span className="text-green-400">+{commit.additions}</span>
+                                              <span className="text-red-400">-{commit.deletions}</span>
+                                            </div>
+                                          </div>
+                                          <ChevronDown className={cn(
+                                            "w-4 h-4 text-gray-500 transition-transform flex-shrink-0",
+                                            isExpanded && "rotate-180"
+                                          )} />
+                                        </div>
+                                      </button>
+
+                                      {/* Expanded details */}
+                                      {isExpanded && (
+                                        <div className="border-t border-white/[0.05] p-4 bg-black/20">
+                                          <div className="flex items-center justify-between mb-3 mt-4">
+                                            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Affected Entities</h4>
+                                            <button
+                                              onClick={() => fetchCommitDiff(commit.id)}
+                                              className="flex items-center gap-1.5 px-2 py-1 rounded bg-green-500/10 border border-green-500/20 text-[10px] font-bold text-green-400 hover:bg-green-500/20 transition-all uppercase tracking-tighter"
+                                            >
+                                              {loadingDiff === commit.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Terminal className="w-3 h-3" />}
+                                              View Source Changes
+                                            </button>
+                                          </div>
+
+                                          <div className="space-y-2">
+                                            {commit.files.map((file, idx) => (
+                                              <div key={idx} className="flex items-center justify-between p-2 rounded bg-white/[0.02] border border-white/[0.05]">
+                                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                  <div className={cn(
+                                                    "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                                                    file.changeType === 'added' && "bg-green-500",
+                                                    file.changeType === 'modified' && "bg-yellow-500",
+                                                    file.changeType === 'deleted' && "bg-red-500"
+                                                  )} />
+                                                  <code className="text-xs font-mono text-gray-300 truncate">{file.path}</code>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs flex-shrink-0">
+                                                  <span className="text-green-400">+{file.additions}</span>
+                                                  <span className="text-red-400">-{file.deletions}</span>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+
+                                          {commitDiffs[commit.id] && (
+                                            <div className="mt-4 p-4 rounded-xl bg-black/40 border border-white/[0.05] overflow-x-auto max-h-[400px]">
+                                              <pre className="text-[11px] font-mono leading-relaxed text-gray-400">
+                                                {commitDiffs[commit.id].split('\n').map((line, i) => (
+                                                  <div
+                                                    key={i}
+                                                    className={cn(
+                                                      "whitespace-pre",
+                                                      line.startsWith('+') && !line.startsWith('+++') ? "text-green-400 bg-green-400/5" :
+                                                        line.startsWith('-') && !line.startsWith('---') ? "text-red-400 bg-red-400/5" :
+                                                          line.startsWith('@@') ? "text-aurora-cyan/70 bg-aurora-cyan/5 my-1" : ""
+                                                    )}
+                                                  >
+                                                    {line}
+                                                  </div>
+                                                ))}
+                                              </pre>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   ) : showCode ? (
                     // --- Source Code View ---
                     <div className="rounded-xl border border-aurora-border bg-[#050608] shadow-2xl overflow-hidden">
@@ -1076,6 +1627,69 @@ export default function Docs() {
                         return <p key={i} className="text-sm text-gray-400 leading-relaxed mb-2">{line}</p>;
                       })}
                     </div>
+
+                    {/* Search Results Sections */}
+                    {(searchResults.files.length > 0 || searchResults.documentation.length > 0) && (
+                      <div className="mt-8 pt-8 border-t border-white/[0.05] space-y-6">
+                        {searchResults.files.length > 0 && (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-aurora-purple uppercase text-[10px] font-bold tracking-widest font-mono">
+                              <File className="w-3.5 h-3.5" />
+                              <span>File Matches</span>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2">
+                              {searchResults.files.map((file, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => {
+                                    setSelectedFile(file.path);
+                                    setShowSearch(false);
+                                  }}
+                                  className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-aurora-purple/30 transition-all text-left group"
+                                >
+                                  <div className="w-8 h-8 rounded-lg bg-aurora-purple/10 flex items-center justify-center text-aurora-purple group-hover:bg-aurora-purple/20 transition-colors">
+                                    <FileText className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <p className="text-sm text-gray-200 font-mono">{file.path.split('/').pop()}</p>
+                                    <p className="text-[10px] text-gray-500 font-mono">{file.path}</p>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {searchResults.documentation.length > 0 && (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-aurora-cyan uppercase text-[10px] font-bold tracking-widest font-mono">
+                              <Search className="w-3.5 h-3.5" />
+                              <span>Documentation Matches</span>
+                            </div>
+                            <div className="space-y-2">
+                              {searchResults.documentation.map((doc, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => {
+                                    setSelectedFile(doc.path);
+                                    setShowSearch(false);
+                                  }}
+                                  className="w-full p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-aurora-cyan/30 transition-all text-left"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[10px] font-mono text-aurora-cyan bg-aurora-cyan/10 px-2 py-0.5 rounded">{doc.path}</span>
+                                    <ArrowUpRight className="w-3 h-3 text-gray-600" />
+                                  </div>
+                                  <p className="text-xs text-gray-400 leading-relaxed italic line-clamp-2">
+                                    {doc.snippet}
+                                  </p>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">

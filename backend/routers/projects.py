@@ -311,7 +311,7 @@ async def ingest_code(project_id: str, request: Request):
                 if filename in LANGUAGE_EXTENSIONS:
                     language = LANGUAGE_EXTENSIONS[filename]
                     file_path = os.path.join(dirpath, filename)
-                    rel_path = os.path.relpath(file_path, repo_path)
+                    rel_path = os.path.relpath(file_path, repo_path).replace("\\", "/")
                     files.append({
                         "project_id": project_id,
                         "path": rel_path,
@@ -323,7 +323,7 @@ async def ingest_code(project_id: str, request: Request):
                     if ext in LANGUAGE_EXTENSIONS:
                         language = LANGUAGE_EXTENSIONS[ext]
                         file_path = os.path.join(dirpath, filename)
-                        rel_path = os.path.relpath(file_path, repo_path)
+                        rel_path = os.path.relpath(file_path, repo_path).replace("\\", "/")
                         files.append({
                             "project_id": project_id,
                             "path": rel_path,
@@ -414,8 +414,8 @@ def clone_and_ingest_code(project_id: str):
                 if any(excluded in dirpath for excluded in ["venv", "node_modules", ".git"]):
                     continue
                 for filename in filenames:
-                    rel_path = os.path.relpath(os.path.join(dirpath, filename), repo_dir)
-
+                    rel_path = os.path.relpath(os.path.join(dirpath, filename), repo_dir).replace("\\", "/")
+                    
                     # Determine language from extension
                     language = "unknown"
                     if filename in LANGUAGE_EXTENSIONS:

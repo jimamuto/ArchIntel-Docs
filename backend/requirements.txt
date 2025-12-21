@@ -1,4 +1,7 @@
 fastapi
 uvicorn
+supabase
 python-dotenv
-httpx
+requests
+groq
+GitPython
