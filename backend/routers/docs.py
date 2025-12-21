@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Body
+from typing import Optional
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 import asyncio
@@ -17,6 +18,131 @@ router = APIRouter()
 
 from llm_groq import generate_doc_with_groq
 from services.git_service import GitHistoryService
+from services.github_service import GitHubService
+import re
+
+# ... (existing code)
+
+@router.get("/{project_id}/history/stats")
+async def get_author_stats(
+    project_id: str,
+    path: str = Query(..., description="File path"),
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        if not os.path.exists(repo_path_full):
+            return {"stats": []}
+            
+        stats = GitHistoryService.get_author_stats(repo_path_full, path)
+        return {"stats": stats}
+    except Exception as e:
+        print(f"Error fetching stats: {e}")
+        return {"stats": [], "error": str(e)}
+
+@router.get("/{project_id}/history/diff")
+async def get_commit_diff(
+    project_id: str,
+    commit_hash: str = Query(..., description="Commit Hash"),
+    file_path: str = Query(..., description="File path"),
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        diff = GitHistoryService.get_commit_diff(repo_path_full, commit_hash, file_path)
+        return {"diff": diff}
+    except Exception as e:
+        return {"diff": "", "error": str(e)}
+
+@router.get("/{project_id}/search")
+async def search_project_files(
+    project_id: str,
+    q: str = Query(..., description="Search query"),
+    repo_path: str = Query(".", description="Local path to the repo")
+):
+    """
+    Search for files and documentation content within the project.
+    """
+    try:
+        # TODO: Implement actual full-text search. 
+        # For now, we'll do a basic filename search and mock doc search
+        # or leverage Supabase if we had vector search.
+        
+        repo_path_full = resolve_repo_path(repo_path)
+        
+        results = {
+            "files": [],
+            "documentation": []
+        }
+        
+        if not q:
+            return results
+
+        # 1. Search Filesystem for filenames
+        if os.path.exists(repo_path_full):
+            for root, dirs, files in os.walk(repo_path_full):
+                # Skip ignoring folders
+                dirs[:] = [d for d in dirs if d not in ['.git', 'node_modules', '__pycache__']]
+                
+                for file in files:
+                    if q.lower() in file.lower():
+                        rel_path = os.path.relpath(os.path.join(root, file), repo_path_full)
+                        results["files"].append({
+                            "path": rel_path,
+                            "name": file
+                        })
+                        if len(results["files"]) >= 10: break
+                if len(results["files"]) >= 10: break
+
+        # 2. Search Documentation in DB
+        try:
+             # Basic LIKE search on file_path or content
+             db_res = supabase.table("file_documentation").select("file_path, content").ilike("file_path", f"%{q}%").limit(5).execute()
+             db_data = db_res.data if hasattr(db_res, 'data') else db_res["data"]
+             
+             if db_data:
+                 for item in db_data:
+                     results["documentation"].append({
+                         "path": item["file_path"],
+                         "preview": item.get("content", "")[:100] + "..."
+                     })
+        except Exception as e:
+            print(f"Search DB Error: {e}")
+
+        return results
+
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return {"files": [], "documentation": [], "error": str(e)}
+
+@router.get("/{project_id}/history/{file_path:path}")
+async def get_file_history(
+    project_id: str,
+    file_path: str,
+    repo_path: str = Query(..., description="Local path to the repo")
+):
+    """
+    Get git history for a specific file.
+    """
+    try:
+        repo_path_full = resolve_repo_path(repo_path)
+        if not os.path.exists(repo_path_full):
+             # Try to clone if strictly necessary or return empty
+             return {"commits": []}
+
+        # Be careful with file_path, it might be URL encoded or have slashes
+        # The path param capture might eat slashes, so we need to be careful.
+        # However, typical usage is history/path/to/file
+        
+        commits = GitHistoryService.get_file_history(repo_path_full, file_path)
+        return {"commits": commits}
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+        return {"commits": [], "error": str(e)}
+
+
+print("DEBUG: LOADING MODIFIED DOCS ROUTER V3 - " + str(datetime.now()))
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -1072,18 +1198,34 @@ async def get_commit_diff(
     project_id: str,
     commit_hash: str = Query(..., description="Commit hash to get diff for"),
     file_path: Optional[str] = Query(None, description="Optional specific file path"),
-    repo_path: str = Query(..., description="Local path to the repository")
+    repo_path: str = Query(..., description="Local path to the repository"),
 ):
-    """Get the raw unified diff for a specific commit."""
+    """
+    Get the raw unified diff for a specific commit.
+    """
     try:
-        repo_path_full = resolve_repo_path(repo_path)
-        if not os.path.exists(repo_path_full):
-            raise HTTPException(status_code=404, detail="Repository path not found")
+        # Check for GitHub API usage
+        project_response = supabase.table("projects").select("repo_url, github_token").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
         
+        repo_url = project.get("repo_url", "")
+        github_match = re.search(r'github\.com[:/]([^/]+)/([^/.]+)', repo_url)
+        
+        if github_match and not repo_path.startswith("."):
+            owner, repo_name = github_match.groups()
+            token = project.get("github_token")
+            diff = GitHubService.get_commit_diff(owner, repo_name, commit_hash, token)
+            return {"diff": diff}
+
+        repo_path_full = resolve_repo_path(repo_path)
+
+        if not os.path.exists(repo_path_full):
+             return {"diff": "Error: Repository not found locally."}
+
         diff = GitHistoryService.get_commit_diff(repo_path_full, commit_hash, file_path)
         return {"diff": diff}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"diff": f"Error: {str(e)}"}
 
 @router.get("/{project_id}/history/stats")
 async def get_author_stats(
@@ -1093,14 +1235,31 @@ async def get_author_stats(
 ):
     """Get aggregated author statistics for a path or the whole project."""
     try:
-        repo_path_full = resolve_repo_path(repo_path)
-        if not os.path.exists(repo_path_full):
-            raise HTTPException(status_code=404, detail="Repository path not found")
+        # Check for GitHub API usage
+        project_response = supabase.table("projects").select("repo_url, github_token").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
         
+        repo_url = project.get("repo_url", "")
+        github_match = re.search(r'github\.com[:/]([^/]+)/([^/.]+)', repo_url)
+        
+        if github_match and not repo_path.startswith("."): # If it's explicitly local (.), skip API
+            owner, repo_name = github_match.groups()
+            token = project.get("github_token")
+            stats = GitHubService.get_author_stats(owner, repo_name, path, token)
+            return {"stats": stats}
+
+        repo_path_full = resolve_repo_path(repo_path)
+        
+        # Validate repo path exists
+        if not os.path.exists(repo_path_full):
+             # If we couldn't fetch from API and don't have local clone, return empty stats
+            return {"stats": []}
+            
         stats = GitHistoryService.get_author_stats(repo_path_full, path)
         return {"stats": stats}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error fetching stats: {e}")
+        return {"stats": []}
 
 @router.get("/{project_id}/history/{file_path:path}")
 async def get_file_history(
@@ -1113,14 +1272,47 @@ async def get_file_history(
     Get Git commit history for a specific file.
     Returns list of commits that affected the file with metadata and changes.
     """
+    print(f"DEBUG: ENTERING get_file_history for {file_path}")
     try:
+        # Check if project has a GitHub URL and we should use the API
+        project_response = supabase.table("projects").select("repo_url, github_token").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+        
+        repo_url = project.get("repo_url", "")
+        github_match = re.search(r'github\.com[:/]([^/]+)/([^/.]+)', repo_url)
+        
+        if github_match and not repo_path.startswith("."): # If it's explicitly local (.), skip API
+            owner, repo_name = github_match.groups()
+            token = project.get("github_token")
+            
+            print(f"DEBUG: Attempting GitHub API fetch for {owner}/{repo_name} - {file_path}")
+            commits = GitHubService.get_file_history(owner, repo_name, file_path, token, limit)
+            
+            if commits:
+                return {
+                    "file": file_path,
+                    "commits": commits,
+                    "total": len(commits),
+                    "source": "github_api"
+                }
+            print("DEBUG: GitHub API returned no commits, falling back to local clone...")
+
         repo_path_full = resolve_repo_path(repo_path)
+        print(f"DEBUG: get_file_history - project_id={project_id}, file_path={file_path}, repo_path_raw={repo_path}, repo_path_resolved={repo_path_full}")
+        
         # Validate repo path exists
         if not os.path.exists(repo_path_full):
-            raise HTTPException(status_code=404, detail="Repository path not found")
+            print(f"DEBUG: Repo path not found: {repo_path_full}")
+            # If we couldn't fetch from API and don't have local clone, we are stuck
+            return {
+                "file": file_path,
+                "commits": [],
+                "error": "Repository not found locally and GitHub API fetch failed or not applicable."
+            }
         
         # Get commit history using GitHistoryService
         commits = GitHistoryService.get_file_history(repo_path_full, file_path, limit)
+        print(f"DEBUG: Found {len(commits)} commits for {file_path}")
         
         return {
             "file": file_path,
@@ -1130,6 +1322,51 @@ async def get_file_history(
     
     except Exception as e:
         print(f"Error fetching file history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@router.get("/{project_id}/history/project")
+async def get_project_history(
+    project_id: str,
+    repo_path: str = Query(..., description="Local path to the repository"),
+    limit: int = Query(100, description="Maximum number of commits to return")
+):
+    """
+    Get overall Git commit history for the entire project.
+    """
+    try:
+        # Check if project has a GitHub URL and we should use the API
+        project_response = supabase.table("projects").select("repo_url, github_token").eq("id", project_id).execute()
+        project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+        
+        repo_url = project.get("repo_url", "")
+        github_match = re.search(r'github\.com[:/]([^/]+)/([^/.]+)', repo_url)
+        
+        if github_match and not repo_path.startswith("."): # If it's explicitly local (.), skip API
+            # For now, we'll try to use the local clone as primary for full project history
+            # until GitHubService is updated to support project-wide commits.
+            pass 
+
+        repo_path_full = resolve_repo_path(repo_path)
+        
+        # Validate repo path exists
+        if not os.path.exists(repo_path_full):
+            return {
+                "commits": [],
+                "error": "Repository not found locally."
+            }
+        
+        # Get commit history using GitHistoryService
+        commits = GitHistoryService.get_project_history(repo_path_full, limit)
+        
+        return {
+            "commits": commits,
+            "total": len(commits)
+        }
+    
+    except Exception as e:
+        print(f"Error fetching project history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

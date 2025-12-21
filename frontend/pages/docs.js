@@ -138,6 +138,37 @@ const BlueprintBackground = () => (
   </div>
 );
 
+// --- Progress Loader Component ---
+const ProgressLoader = ({ message, percent }) => (
+  <div className="flex flex-col items-center justify-center py-20 animate-in fade-in duration-500">
+    <div className="w-full max-w-sm space-y-6">
+      <div className="flex justify-between items-end">
+        <span className="text-sm font-medium text-aurora-cyan animate-pulse">
+          {message || 'Processing...'}
+        </span>
+        <span className="text-xs font-mono text-gray-500">{percent}%</span>
+      </div>
+
+      <div className="h-1.5 w-full bg-white/[0.05] rounded-full overflow-hidden border border-white/[0.05]">
+        <div
+          className="h-full bg-gradient-to-r from-aurora-purple via-aurora-cyan to-aurora-purple bg-[length:200%_100%] animate-[shimmer_2s_infinite]"
+          style={{ width: `${percent}%`, transition: 'width 0.5s ease-out' }}
+        />
+      </div>
+
+      <div className="flex justify-center gap-1.5 pt-2">
+        {[...Array(3)].map((_, i) => (
+          <div
+            key={i}
+            className="w-1 h-1 rounded-full bg-aurora-purple/50 animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s` }}
+          />
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 export default function Docs() {
   const router = useRouter();
   const [projects, setProjects] = useState([]);
@@ -156,6 +187,7 @@ export default function Docs() {
     cloning: false,
     syncing: false
   });
+  const [loadingProgress, setLoadingProgress] = useState({ message: '', percent: 0 });
   const { success: showToast, error: showError } = useToast();
   const [error, setError] = useState(null);
   const [showCode, setShowCode] = useState(false);
@@ -175,6 +207,13 @@ export default function Docs() {
   const [authorStats, setAuthorStats] = useState([]);
   const [commitDiffs, setCommitDiffs] = useState({}); // { commitHash: diffText }
   const [loadingDiff, setLoadingDiff] = useState(null); // commitHash
+
+  // Rationale Tab State
+  const [showRationale, setShowRationale] = useState(false);
+  const [rationaleData, setRationaleData] = useState({ rationale: '', discussions_count: 0 });
+  const [discussions, setDiscussions] = useState([]);
+  const [loadingRationale, setLoadingRationale] = useState(false);
+  const [isIngesting, setIsIngesting] = useState(false);
 
   // Fetch Git history when History tab is opened
   useEffect(() => {
@@ -238,6 +277,68 @@ export default function Docs() {
       console.error('Error fetching commit diff:', error);
     } finally {
       setLoadingDiff(null);
+    }
+  };
+
+  // Fetch Rationale & Discussions
+  useEffect(() => {
+    if (showRationale && selectedProject) {
+      fetchRationale();
+      fetchDiscussions();
+    }
+  }, [showRationale, selectedProject]);
+
+  const fetchRationale = async () => {
+    if (!selectedProject) return;
+    setLoadingRationale(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/rationale`);
+      if (response.ok) {
+        const data = await response.json();
+        setRationaleData(data);
+      }
+    } catch (error) {
+      console.error('Error fetching rationale:', error);
+    } finally {
+      setLoadingRationale(false);
+    }
+  };
+
+  const fetchDiscussions = async () => {
+    if (!selectedProject) return;
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/discussions`);
+      if (response.ok) {
+        const data = await response.json();
+        setDiscussions(data.discussions || []);
+      }
+    } catch (error) {
+      console.error('Error fetching discussions:', error);
+    }
+  };
+
+  const handleIngestDiscussions = async () => {
+    if (!selectedProject || isIngesting) return;
+    setIsIngesting(true);
+    try {
+      showToast("Ingesting discussions from GitHub...");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/context/${selectedProject}/ingest/discussions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 30 })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        showToast(data.message);
+        fetchRationale();
+        fetchDiscussions();
+      } else {
+        showError("Failed to ingest discussions.");
+      }
+    } catch (error) {
+      showError("Error connecting to server.");
+    } finally {
+      setIsIngesting(false);
     }
   };
 
@@ -528,11 +629,14 @@ export default function Docs() {
       }
 
       setLoading(prev => ({ ...prev, content: true }));
+      setLoadingProgress({ message: 'Initializing analysis...', percent: 10 });
       setError(null);
+
       try {
         const repoName = selectedProjectData.repo_url.split('/').pop().replace('.git', '');
         let repoPath = repoName === 'ArchIntel-Docs' ? '.' : `repos/${repoName}`;
 
+        setLoadingProgress({ message: 'Generating architectural documentation...', percent: 40 });
         const docRes = await fetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/docs/${selectedProject}/file/doc?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
         );
@@ -541,15 +645,21 @@ export default function Docs() {
         setEditContent(docText);
         setIsEditing(false);
 
+        setLoadingProgress({ message: 'Fetching source code...', percent: 80 });
         const codeRes = await fetch(
           `${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${selectedProject}/file/code?path=${encodeURIComponent(selectedFile)}&repo_path=${encodeURIComponent(repoPath)}`
         );
         const codeText = codeRes.ok ? await codeRes.text() : '// Could not fetch source code';
         setCode(codeText);
+
+        setLoadingProgress({ message: 'Finalizing...', percent: 100 });
       } catch (err) {
         setError('Failed to load file content');
       } finally {
-        setLoading(prev => ({ ...prev, content: false }));
+        setTimeout(() => {
+          setLoading(prev => ({ ...prev, content: false }));
+          setLoadingProgress({ message: '', percent: 0 });
+        }, 500); // Small delay to show 100% completion
       }
     }
 
@@ -954,6 +1064,17 @@ export default function Docs() {
                 >
                   <Database className="w-3.5 h-3.5" /> System Architecture
                 </button>
+                <button
+                  onClick={() => { setShowRationale(true); setShowHistory(false); setShowCode(false); setShowSystemDoc(false); }}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 text-xs font-medium border-t border-l border-r rounded-t-lg transition-all relative top-[1px]",
+                    showRationale
+                      ? "bg-[#0F1117] border-aurora-border text-aurora-cyan shadow-sm z-10"
+                      : "border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/[0.02]"
+                  )}
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Rationale
+                </button>
 
                 <div className="flex-1 border-b border-aurora-border" />
 
@@ -1037,12 +1158,107 @@ export default function Docs() {
                       </div>
                     </div>
                   ) : loading.content ? (
-                    <div className="space-y-6 animate-pulse p-4">
-                      <div className="h-8 w-1/3 bg-white/[0.05] rounded-lg" />
-                      <div className="space-y-3 pt-4">
-                        <div className="h-4 w-full bg-white/[0.03] rounded" />
-                        <div className="h-4 w-5/6 bg-white/[0.03] rounded" />
-                        <div className="h-4 w-4/6 bg-white/[0.03] rounded" />
+                    <ProgressLoader message={loadingProgress.message} percent={loadingProgress.percent} />
+                  ) : showRationale ? (
+                    // --- Rationale View ---
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="bg-gradient-to-br from-aurora-cyan/10 to-transparent border border-aurora-cyan/20 rounded-2xl p-8 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                          <Sparkles className="w-32 h-32 text-aurora-cyan" />
+                        </div>
+                        <div className="relative z-10">
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 rounded-xl bg-aurora-cyan/10 border border-aurora-cyan/20">
+                                <Sparkles className="w-6 h-6 text-aurora-cyan" />
+                              </div>
+                              <h1 className="text-3xl font-bold text-white">Project Rationale</h1>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleIngestDiscussions}
+                              disabled={isIngesting}
+                              className="border-aurora-cyan/30 bg-black/20 text-aurora-cyan hover:bg-aurora-cyan hover:text-black transition-all rounded-xl font-bold"
+                            >
+                              {isIngesting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                              Sync GitHub Context
+                            </Button>
+                          </div>
+                          <p className="text-gray-400 max-w-2xl leading-relaxed">
+                            AI-synthesized design rationale and trade-offs derived from Pull Requests, Issues, and architectural discussions.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        {/* Left: AI Rationale */}
+                        <div className="lg:col-span-2 space-y-6">
+                          <div className="aurora-card p-8 min-h-[400px]">
+                            {loadingRationale ? (
+                              <div className="flex flex-col items-center justify-center h-[300px] text-gray-500">
+                                <Loader2 className="w-10 h-10 animate-spin text-aurora-cyan/50 mb-4" />
+                                <p className="font-mono text-sm animate-pulse">Synthesizing Architectural Rationale...</p>
+                              </div>
+                            ) : (
+                              <div className="prose prose-invert prose-p:text-gray-300 prose-headings:font-bold prose-pre:bg-[#0A0C10] max-w-none">
+                                <ReactMarkdown
+                                  components={{
+                                    h1: ({ node, ...props }) => <h1 className="text-2xl font-bold text-white mb-6 border-b border-white/[0.1] pb-4" {...props} />,
+                                    h2: ({ node, ...props }) => <h2 className="text-xl mt-8 mb-4 text-aurora-cyan font-mono" {...props} />,
+                                    h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-6 mb-2 text-aurora-purple" {...props} />,
+                                    p: ({ node, ...props }) => <p className="leading-relaxed mb-4 text-gray-300/90" {...props} />,
+                                    ul: ({ node, ...props }) => <ul className="list-disc ml-6 space-y-2 mb-4 text-gray-300" {...props} />,
+                                    li: ({ node, ...props }) => <li className="leading-relaxed" {...props} />,
+                                    strong: ({ node, ...props }) => <strong className="text-white font-bold" {...props} />,
+                                  }}
+                                >
+                                  {rationaleData.rationale || "# No Rationale Available\n\nIngest GitHub discussions to generate an AI synthesis of the project's design decisions."}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right: Raw Discussions */}
+                        <div className="space-y-4">
+                          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Source Context ({discussions.length})</h3>
+                          <ScrollArea className="h-[600px] pr-4">
+                            <div className="space-y-3">
+                              {discussions.length === 0 ? (
+                                <div className="p-8 text-center border border-dashed border-white/[0.05] rounded-2xl text-gray-600 italic text-xs">
+                                  No discussions ingested yet.
+                                </div>
+                              ) : (
+                                discussions.map((disc, i) => (
+                                  <a
+                                    key={i}
+                                    href={disc.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block p-4 rounded-xl bg-white/[0.02] border border-white/[0.05] hover:border-aurora-cyan/30 hover:bg-white/[0.04] transition-all group"
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      {disc.source === 'github_pr' ? (
+                                        <GitPullRequest className="w-4 h-4 text-aurora-purple mt-0.5" />
+                                      ) : (
+                                        <MessageSquare className="w-4 h-4 text-aurora-cyan mt-0.5" />
+                                      )}
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-bold text-gray-200 line-clamp-2 group-hover:text-white transition-colors">{disc.title}</p>
+                                        <div className="flex items-center gap-2 mt-2">
+                                          <span className="text-[10px] text-gray-500 font-mono">#{disc.external_id}</span>
+                                          <span className="w-1 h-1 rounded-full bg-gray-700" />
+                                          <span className="text-[10px] text-gray-500 truncate">@{disc.author}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </a>
+                                ))
+                              )}
+                            </div>
+                          </ScrollArea>
+                        </div>
                       </div>
                     </div>
                   ) : showSystemDoc ? (
@@ -1465,7 +1681,7 @@ export default function Docs() {
                               h1: ({ node, ...props }) => <h1 className="text-4xl font-bold text-white mb-6 border-b border-white/[0.1] pb-4" {...props} />,
                               h2: ({ node, ...props }) => <h2 className="text-2xl mt-12 mb-6 text-white font-semibold flex items-center gap-2" {...props} />,
                               h3: ({ node, ...props }) => <h3 className="text-lg font-bold mt-8 mb-3 text-aurora-purple" {...props} />,
-                              p: ({ node, ...props }) => <p className="leading-7 mb-4 text-gray-300/90" {...props} />,
+                              p: ({ node, ...props }) => <div className="leading-7 mb-4 text-gray-300/90" {...props} />,
                               ul: ({ node, ...props }) => <ul className="list-none space-y-2 ml-4 mb-4" {...props} />,
                               li: ({ node, ...props }) => (
                                 <div className="flex gap-3 items-start">
@@ -1629,9 +1845,9 @@ export default function Docs() {
                     </div>
 
                     {/* Search Results Sections */}
-                    {(searchResults.files.length > 0 || searchResults.documentation.length > 0) && (
+                    {(searchResults?.files?.length > 0 || searchResults?.documentation?.length > 0) && (
                       <div className="mt-8 pt-8 border-t border-white/[0.05] space-y-6">
-                        {searchResults.files.length > 0 && (
+                        {searchResults?.files?.length > 0 && (
                           <div className="space-y-3">
                             <div className="flex items-center gap-2 text-aurora-purple uppercase text-[10px] font-bold tracking-widest font-mono">
                               <File className="w-3.5 h-3.5" />
@@ -1660,7 +1876,7 @@ export default function Docs() {
                           </div>
                         )}
 
-                        {searchResults.documentation.length > 0 && (
+                        {searchResults?.documentation?.length > 0 && (
                           <div className="space-y-3">
                             <div className="flex items-center gap-2 text-aurora-cyan uppercase text-[10px] font-bold tracking-widest font-mono">
                               <Search className="w-3.5 h-3.5" />

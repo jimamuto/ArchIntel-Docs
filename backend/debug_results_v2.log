@@ -1,0 +1,26 @@
+--- Start Debug V2 ---
+
+--- Testing Docs Router Root ---
+URL: http://localhost:8000/docs/test
+Status: 200
+Success.
+
+--- Testing Git History ---
+URL: http://localhost:8000/docs/test-project/history/backend/main.py?repo_path=.
+Status: 404
+Error Body: {"detail":"Not Found"}
+
+--- Testing Git Stats ---
+URL: http://localhost:8000/docs/test-project/history/stats?path=backend/main.py&repo_path=.
+Status: 404
+Error Body: {"detail":"Not Found"}
+
+--- Testing Search ---
+URL: http://localhost:8000/docs/test-project/search?q=main
+Status: 404
+Error Body: {"detail":"Not Found"}
+
+--- Testing Projects List ---
+URL: http://localhost:8000/projects
+Status: 200
+Success.

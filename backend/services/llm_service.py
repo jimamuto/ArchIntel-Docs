@@ -9,8 +9,10 @@ def generate_doc(prompt: str, provider: Optional[str] = None) -> str:
     """
     groq_key = os.getenv("GROQ_API_KEY")
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
 
     print(f"DEBUG: groq_key present: {bool(groq_key)}")
+    print(f"DEBUG: openrouter_key present: {bool(openrouter_key)}")
     print(f"DEBUG: gemini_key present: {bool(gemini_key)}")
 
     # 1. Try Groq
@@ -21,13 +23,21 @@ def generate_doc(prompt: str, provider: Optional[str] = None) -> str:
         if not result.startswith("Error: Groq API rate limit") and not result.startswith("Error: Groq API returned 429"):
             print("DEBUG: Groq successful (or non-retryable error)")
             return result
-        print("DEBUG: Groq rate limit/error detected, trying Gemini fallback...")
+        print("DEBUG: Groq rate limit/error detected, trying OpenRouter (DeepSeek) fallback...")
 
-    # 2. Try Gemini
+    # 2. Try OpenRouter (DeepSeek)
+    if openrouter_key:
+        print("DEBUG: Attempting OpenRouter (DeepSeek)...")
+        result = _call_openrouter(prompt, openrouter_key)
+        if not result.startswith("Error: OpenRouter API"):
+             return result
+        print("DEBUG: OpenRouter error detected, trying Gemini fallback...")
+
+    # 3. Try Gemini
     if gemini_key:
         return _call_gemini(prompt, gemini_key)
     
-    # 3. Fallback to mock
+    # 4. Fallback to mock
     return _call_mock(prompt)
 
 def _call_groq(prompt: str, api_key: str) -> str:
@@ -63,6 +73,40 @@ def _call_groq(prompt: str, api_key: str) -> str:
     except Exception as e:
         print(f"Groq Generic API Error: {e}")
         return f"Error: Groq call failed: {str(e)}"
+
+def _call_openrouter(prompt: str, api_key: str) -> str:
+    """
+    Call OpenRouter API to access DeepSeek models.
+    Model: deepseek/deepseek-r1-0528:free
+    """
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "http://localhost:8000", # Localhost for now
+        "X-Title": "ArchIntel Local"
+    }
+    payload = {
+        "model": "deepseek/deepseek-r1-0528:free",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3
+    }
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        try:
+            error_detail = e.response.json().get("error", {}).get("message", str(e))
+        except:
+            error_detail = str(e)
+        print(f"OpenRouter API HTTP Error {status_code}: {error_detail}")
+        return f"Error: OpenRouter API returned {status_code}: {error_detail}"
+    except Exception as e:
+        print(f"OpenRouter Generic API Error: {e}")
+        return f"Error: OpenRouter call failed: {str(e)}"
 
 def _call_gemini(prompt: str, api_key: str) -> str:
     """
