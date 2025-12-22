@@ -344,3 +344,4 @@ You can later add:
 
 Suggested structure for the app router.[web:31][web:41]
 
+docker run -d --name archintel-redis -p 6379:6379 redis:alpine

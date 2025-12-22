@@ -7,3 +7,5 @@ groq
 GitPython
 httpx
 pydantic-settings
+arq
+redis

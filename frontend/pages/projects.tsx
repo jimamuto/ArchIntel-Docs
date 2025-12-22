@@ -177,6 +177,26 @@ export default function DashboardPage() {
     }
   }, [router.isReady]);
 
+  // Auto-refresh polling for projects in 'analyzing' status
+  useEffect(() => {
+    const hasAnalyzing = projects.some(p => p.status === 'analyzing');
+    if (!hasAnalyzing) return;
+
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
+        if (res.ok) {
+          const data = await res.json();
+          setProjects(data.projects || []);
+        }
+      } catch (err) {
+        console.error("Polling error", err);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(intervalId);
+  }, [projects]);
+
   // Legacy OAuth listener (can be kept for manual linking if needed, but primary flow is now session-based)
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {

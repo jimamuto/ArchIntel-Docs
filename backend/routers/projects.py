@@ -293,7 +293,16 @@ async def register_project(request: Request, user = Depends(get_current_user), s
             response = supabase.table("projects").insert(insert_data).execute()
             
         project = response.data[0] if hasattr(response, 'data') and response.data else response["data"][0]
-        return {"message": "Project registered", "project": project}
+        
+        # Trigger background analysis immediately after registration
+        if app_state := getattr(request.app, "state", None):
+            arq_pool = getattr(app_state, "arq_pool", None)
+            if arq_pool:
+                await arq_pool.enqueue_job("analyze_project_task", project["id"])
+            else:
+                print(f"Warning: Background analysis skipped for project {project['id']} (Redis unavailable)")
+        
+        return {"message": "Project registered and analysis queued", "project": project}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -349,109 +358,40 @@ def get_structure(project_id: str, supabase: Client = Depends(get_supabase_clien
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{project_id}/clone")
-def clone_and_ingest_code(project_id: str, supabase: Client = Depends(get_supabase_client)):
+async def clone_and_ingest_code(project_id: str, request: Request, supabase: Client = Depends(get_supabase_client)):
     """
-    Clone repository and ingest file metadata only (stateless - no content storage).
-    Creates temporary clone to scan file structure without storing sensitive code.
+    Queue background task to clone repository and ingest file metadata.
     """
     try:
-        # Get project details
-        project_response = supabase.table("projects").select("name, repo_url, github_token").eq("id", project_id).execute()
-        try:
-            project = project_response.data[0]
-        except (AttributeError, IndexError, TypeError):
-            try:
-                project = project_response["data"][0]
-            except (KeyError, IndexError, TypeError):
-                raise HTTPException(status_code=404, detail="Project not found")
-
-        if not project:
+        # Check if project exists
+        project_response = supabase.table("projects").select("id, name").eq("id", project_id).execute()
+        if not project_response.data:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        repo_url = project["repo_url"]
-        github_token = project.get("github_token")
-
-        # Check if we already have files for this project
-        existing_files = supabase.table("files").select("id", count="exact").eq("project_id", project_id).execute()
-        if hasattr(existing_files, 'count') and existing_files.count > 0:
-            return {"message": f"Project {project['name']} already has {existing_files.count} files stored in database", "files_count": existing_files.count}
-
-        # Extract GitHub repo info from URL
-        import re
-        github_match = re.match(r'https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
-        if not github_match:
-            raise HTTPException(status_code=400, detail="Invalid GitHub repository URL")
-
-        owner, repo = github_match.groups()
-
-        # Clone to temp directory to scan file structure
-        temp_dir = tempfile.mkdtemp()
-        repo_dir = os.path.join(temp_dir, "repo")
-
-        try:
-            # Prepare clone command with authentication if token exists
-            clone_cmd = ["git", "clone", "--depth", "1", repo_url, repo_dir]
-            
-            if github_token:
-                # Construct authenticated URL: https://TOKEN@github.com/owner/repo.git
-                # Be careful not to log this URL
-                auth_repo_url = f"https://{github_token}@github.com/{owner}/{repo}.git"
-                clone_cmd = ["git", "clone", "--depth", "1", auth_repo_url, repo_dir]
-
-            # Clone the repository
-            # NOTE: We avoid capture_output=True or text=True combined with printing result on error
-            # to prevent leaking the token in logs/error messages if possible.
-            # However, for debugging we might need stderr. We'll strip the token from the error message.
-            result = subprocess.run(clone_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                error_msg = result.stderr
-                if github_token:
-                    error_msg = error_msg.replace(github_token, "[REDACTED]")
-                raise HTTPException(status_code=400, detail=f"Git clone failed: {error_msg}")
-
-            # Scan files and collect metadata only
-            files_to_insert = []
-            for dirpath, _, filenames in os.walk(repo_dir):
-                if any(excluded in dirpath for excluded in ["venv", "node_modules", ".git"]):
-                    continue
-                for filename in filenames:
-                    rel_path = os.path.relpath(os.path.join(dirpath, filename), repo_dir).replace("\\", "/")
-                    
-                    # Determine language from extension
-                    language = "unknown"
-                    if filename in LANGUAGE_EXTENSIONS:
-                        language = LANGUAGE_EXTENSIONS[filename]
-                    else:
-                        _, ext = os.path.splitext(filename)
-                        if ext in LANGUAGE_EXTENSIONS:
-                            language = LANGUAGE_EXTENSIONS[ext]
-
-                    files_to_insert.append({
-                        "project_id": project_id,
-                        "path": rel_path,
-                        "language": language
-                    })
-
-            if files_to_insert:
-                supabase.table("files").insert(files_to_insert).execute()
-                # Update project status to active after successful ingestion
-                supabase.table("projects").update({"status": "active"}).eq("id", project_id).execute()
+        # Queue the background task
+        if app_state := getattr(request.app, "state", None):
+            arq_pool = getattr(app_state, "arq_pool", None)
+            if arq_pool:
+                await arq_pool.enqueue_job("analyze_project_task", project_id)
+                # Update status to pending/analyzing
+                supabase.table("projects").update({"status": "analyzing"}).eq("id", project_id).execute()
                 
                 return {
-                    "message": f"Successfully scanned {len(files_to_insert)} files for {project['name']} (metadata only)",
-                    "files_count": len(files_to_insert),
-                    "note": "File content not stored in database for security. Access via local repository."
+                    "message": "Project analysis task queued",
+                    "project_id": project_id,
+                    "status": "analyzing"
                 }
             else:
-                # If no files found, still set to active (or ready) to clear the "analyzing" state
-                supabase.table("projects").update({"status": "active"}).eq("id", project_id).execute()
-                return {"message": f"No files found in {project['name']}"}
+                print("Warning: Redis unavailable, falling back to synchronous execution for project {project_id}")
+                # For now, let's keep it simple and just return 503 if we specifically want background
+                raise HTTPException(status_code=503, detail="Background worker unavailable (Redis connection failed)")
+        
+        raise HTTPException(status_code=500, detail="Background worker not initialized")
 
-        finally:
-            # Clean up temp directory
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -465,11 +405,8 @@ async def sync_project(project_id: str, supabase: Client = Depends(get_supabase_
         # 1. Delete existing files
         supabase.table("files").delete().eq("project_id", project_id).execute()
         
-        # 2. Update status
-        supabase.table("projects").update({"status": "analyzing"}).eq("id", project_id).execute()
-        
-        # 3. Trigger re-ingestion
-        return clone_and_ingest_code(project_id, supabase)
+        # 2. Update status and queue task
+        return await clone_and_ingest_code(project_id, request, supabase)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
