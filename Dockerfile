@@ -5,6 +5,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install
 COPY frontend/ ./
+ENV NEXT_PUBLIC_API_BASE_URL=/api
 RUN npm run build
 
 # Stage 2: Final Image
