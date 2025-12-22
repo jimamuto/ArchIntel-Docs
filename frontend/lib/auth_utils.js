@@ -44,6 +44,19 @@ export const signInWithGitHub = async () => {
     if (error) throw error;
 };
 
+export const signInWithGoogle = async () => {
+    if (!supabase) throw new Error('Supabase not configured');
+
+    const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            redirectTo: `${window.location.origin}/projects`,
+        }
+    });
+
+    if (error) throw error;
+};
+
 export const authenticatedFetch = async (url, options = {}) => {
     const session = await getSession();
     const headers = {

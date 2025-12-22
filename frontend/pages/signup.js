@@ -3,7 +3,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
-import { Github, Mail, ArrowLeft, Zap, Shield, Lock, Sparkles, Check } from 'lucide-react';
+import { Github, Mail, ArrowLeft, Zap, Shield, Lock, Sparkles, Check, Search } from 'lucide-react';
 import { Button } from '../components/ui/button';
 
 const BlueprintBackground = () => (
@@ -28,6 +28,18 @@ export default function Signup() {
             await signInWithGitHub();
         } catch (err) {
             setError(err.message || "Failed to initialize GitHub authentication.");
+            setIsLoading(false);
+        }
+    };
+
+    const handleGoogleSignup = async () => {
+        setIsLoading(true);
+        setError(null);
+        try {
+            const { signInWithGoogle } = await import('../lib/auth_utils');
+            await signInWithGoogle();
+        } catch (err) {
+            setError(err.message || "Failed to initialize Google authentication.");
             setIsLoading(false);
         }
     };
@@ -170,6 +182,22 @@ export default function Signup() {
                                             <>
                                                 <Github className="w-5 h-5" />
                                                 Continue with GitHub
+                                            </>
+                                        )}
+                                    </Button>
+
+                                    {/* Google Signup */}
+                                    <Button
+                                        onClick={handleGoogleSignup}
+                                        disabled={isLoading}
+                                        className="w-full h-12 bg-white hover:bg-white/90 text-gray-900 border border-white/10 rounded-xl font-medium flex items-center justify-center gap-3 transition-all"
+                                    >
+                                        {isLoading ? (
+                                            <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-600 rounded-full animate-spin" />
+                                        ) : (
+                                            <>
+                                                <Search className="w-5 h-5 text-red-500" />
+                                                Continue with Google
                                             </>
                                         )}
                                     </Button>

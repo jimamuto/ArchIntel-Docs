@@ -43,17 +43,19 @@ class GitHubService:
             commits_data = response.json()
             result = []
 
-            for item in commits_data:
+            # To avoid N+1 slow requests, we fetch details in parallel for the returned commits
+            # We limit this to the requested amount (already limited by GitHub's per_page)
+            # but we use a ThreadPool to speed it up.
+            from concurrent.futures import ThreadPoolExecutor
+            
+            def fetch_details(item):
+                sha = item["sha"]
                 commit = item["commit"]
                 author = commit["author"]
-                sha = item["sha"]
                 
-                # We need to fetch details to get stats (additions/deletions)
-                # This causes N+1 requests, so use sparingly or with a smaller limit by default for deep stats
-                # For the list view, we might skip detailed stats or fetch them on demand
-                # But to match the existing UI, we'll try to get them for the most recent few or just return 0s
+                details = GitHubService.get_commit_details(owner, repo, sha, token)
                 
-                result.append({
+                return {
                     'id': sha[:7],
                     'hash': sha[:7],
                     'fullHash': sha,
@@ -61,11 +63,14 @@ class GitHubService:
                     'email': author["email"],
                     'date': author["date"],
                     'message': commit["message"],
-                    'filesChanged': 1, # Implied
-                    'additions': 0, # Requires fetching individual commit
-                    'deletions': 0, # Requires fetching individual commit
-                    'files': [] # Requires fetching individual commit
-                })
+                    'filesChanged': details.get('filesChanged', 1),
+                    'additions': details.get('additions', 0),
+                    'deletions': details.get('deletions', 0),
+                    'files': details.get('files', [])
+                }
+
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                result = list(executor.map(fetch_details, commits_data))
 
             return result
         except Exception as e:
