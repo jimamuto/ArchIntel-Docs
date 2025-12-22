@@ -33,11 +33,12 @@ app.add_middleware(
 async def startup_event():
     # Use redis://localhost:6379 by default or whatever is in env
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    source = "env" if os.getenv("REDIS_URL") else "default"
     try:
         app.state.arq_pool = await create_pool(RedisSettings.from_dsn(redis_url))
-        print(f"Connected to Redis for background tasks at {redis_url}")
+        print(f"Connected to Redis for background tasks at {redis_url} (source: {source})")
     except Exception as e:
-        print(f"Warning: Could not connect to Redis at {redis_url}. Background tasks will be disabled. Error: {e}")
+        print(f"Warning: Could not connect to Redis at {redis_url} (source: {source}). Background tasks will be disabled. Error: {e}")
         app.state.arq_pool = None
 
 @app.on_event("shutdown")

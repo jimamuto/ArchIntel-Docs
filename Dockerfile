@@ -11,8 +11,8 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Node.js and Git in the final image
-RUN apt-get update && apt-get install -y nodejs npm git && rm -rf /var/lib/apt/lists/*
+# Install Node.js, Git, and Redis in the final image
+RUN apt-get update && apt-get install -y nodejs npm git redis-server && rm -rf /var/lib/apt/lists/*
 
 # Copy backend and install dependencies
 COPY backend/requirements.txt ./backend/
