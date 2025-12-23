@@ -52,11 +52,15 @@ async def ingest_discussions(project_id: str, request: IngestRequest = Body(...)
 
         # 3. Store in Supabase (upsert)
         for disc in all_discussions:
+            # We include the status in the title to keep it visible for rationale synthesis
+            # without requiring a schema change for a 'status' column.
+            status_prefix = f"[{disc['status'].upper()}] " if 'status' in disc else ""
+            
             data = {
                 "project_id": project_id,
                 "source": disc["source"],
                 "external_id": disc["external_id"],
-                "title": disc["title"],
+                "title": f"{status_prefix}{disc['title']}",
                 "body": disc["body"],
                 "author": disc["author"],
                 "url": disc["url"],
@@ -125,18 +129,21 @@ async def get_rationale(project_id: str, supabase: Client = Depends(get_supabase
             discussions_context += f"Content: {d['body'][:500]}...\n\n"
 
         prompt = f"""
-You are an expert software architect. Analyze the following Pull Requests and Issues (discussions) from a software project and synthesize a comprehensive "Design Rationale" document in Markdown format.
+You are an expert software architect analyzing a project's history. 
+
+Analyze the following Pull Requests and Issues (discussions) and synthesize a comprehensive "Design Rationale" document. 
+The discussions include status indicators like [MERGED] or [CLOSED] in the titles—pay close attention to these.
 
 Your report should include:
-1. **Key Design Decisions**: What were the major decisions made based on these discussions?
-2. **Trade-offs & Alternatives**: What alternatives were considered? Why was the chosen path preferred?
-3. **Known Constraints**: Any limitations or technical debt mentioned.
-4. **Author Contributions**: Briefly mention key contributors and their roles in these decisions.
+1. **Key Design Decisions**: What were the major decisions made? Focus on MERGED pull requests as they represent accepted changes.
+2. **Rejected Alternatives**: Analyze CLOSED (unmerged) PRs or Issues where a path was rejected. Why? What trade-offs were discussed?
+3. **Emerging Constraints**: Any limitations, technical debt, or patterns that emerged from these discussions.
+4. **Summary of Contribution**: Briefly note how these discussions shaped the current architecture.
 
 Discussions Data:
 {discussions_context}
 
-Output only the Markdown document. Keep it professional, insightful, and concise.
+Output only the Markdown document. Keep it professional, technically dense, and insightful.
 """
         # 3. Call LLM
         rationale = generate_doc(prompt)

@@ -208,17 +208,17 @@ class GitHubService:
             prs = response.json()
             result = []
             for pr in prs:
-                # We only want merged PRs for rationale
-                if pr.get("merged_at"):
-                    result.append({
-                        "external_id": str(pr["number"]),
-                        "title": pr["title"],
-                        "body": pr["body"],
-                        "author": pr["user"]["login"],
-                        "url": pr["html_url"],
-                        "created_at": pr["created_at"],
-                        "source": "github_pr"
-                    })
+                # Inclue closed PRs (merged or just closed)
+                result.append({
+                    "external_id": str(pr["number"]),
+                    "title": pr["title"],
+                    "body": pr["body"] or "",
+                    "author": pr["user"]["login"],
+                    "status": "merged" if pr.get("merged_at") else "closed",
+                    "url": pr["html_url"],
+                    "created_at": pr["created_at"],
+                    "source": "github_pr"
+                })
             return result
         except Exception as e:
             print(f"Error fetching PRs: {e}")
@@ -245,8 +245,9 @@ class GitHubService:
                     result.append({
                         "external_id": str(issue["number"]),
                         "title": issue["title"],
-                        "body": issue["body"],
+                        "body": issue["body"] or "",
                         "author": issue["user"]["login"],
+                        "status": issue["state"],
                         "url": issue["html_url"],
                         "created_at": issue["created_at"],
                         "source": "github_issue"
