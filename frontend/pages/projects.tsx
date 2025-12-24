@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -28,7 +29,8 @@ import {
   Github,
   Zap,
   RefreshCw,
-  X
+  X,
+  Shield
 } from 'lucide-react';
 import { useToast } from '../lib/toast';
 import { cn } from '../lib/utils';
@@ -74,6 +76,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState({ projects: true, submission: false, syncing: false });
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showCLIModal, setShowCLIModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [syncingIds, setSyncingIds] = useState<Set<number>>(new Set());
 
   async function handleSync(id: number) {
@@ -109,17 +113,33 @@ export default function DashboardPage() {
   }
 
   async function deleteProject(id: number) {
-    if (!confirm('Are you sure you want to terminate this node?')) return;
+    const project = projects.find(p => p.id === id);
+    if (project) {
+      setProjectToDelete(project);
+      setShowDeleteConfirm(true);
+    }
+  }
+
+  async function handleDeleteExecute() {
+    if (!projectToDelete) return;
+
+    setLoading(prev => ({ ...prev, syncing: true })); // Reuse syncing for deletion state if needed
     try {
-      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${id}`, { method: 'DELETE' });
+      const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${projectToDelete.id}`, {
+        method: 'DELETE'
+      });
       if (res.ok) {
-        setProjects(projects.filter(p => p.id !== id));
+        setProjects(projects.filter(p => p.id !== projectToDelete.id));
         showToast("Node terminated.");
+        setShowDeleteConfirm(false);
+        setProjectToDelete(null);
       } else {
         showError("Termination failed.");
       }
     } catch (err) {
       showError("Connection lost.");
+    } finally {
+      setLoading(prev => ({ ...prev, syncing: false }));
     }
   }
 
@@ -686,6 +706,63 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
+        </div>
+      )}
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && projectToDelete && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/90 backdrop-blur-md animate-in fade-in duration-300"
+            onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="relative w-full max-w-md bg-[#0A0C10] border border-red-500/20 rounded-[24px] shadow-2xl p-8 overflow-hidden"
+          >
+            {/* Red alert top border */}
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 via-orange-500 to-red-500" />
+
+            <div className="flex flex-col items-center text-center space-y-6">
+              <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <AlertCircle className="w-8 h-8 text-red-500" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold text-white tracking-tight">Terminate Node?</h3>
+                <p className="text-sm text-gray-400 leading-relaxed px-4">
+                  Are you sure you want to delete <span className="text-white font-bold">{projectToDelete.name}</span>?
+                  This action will permanently remove all analyzed structural data and documentation.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 w-full pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
+                  className="h-12 border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05] text-gray-400 rounded-xl font-bold"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDeleteExecute}
+                  disabled={loading.syncing}
+                  className="h-12 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-lg shadow-red-900/20"
+                >
+                  {loading.syncing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Terminate"
+                  )}
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
+                <Shield className="w-3 h-3" />
+                Permanent removal protocol
+              </div>
+            </div>
+          </motion.div>
         </div>
       )}
     </div>
