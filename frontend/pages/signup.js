@@ -20,6 +20,17 @@ export default function Signup() {
     const [error, setError] = useState(null);
     const [isSuccess, setIsSuccess] = useState(false);
 
+    useEffect(() => {
+        async function checkAuth() {
+            const { getSession } = await import('../lib/auth_utils');
+            const session = await getSession();
+            if (session) {
+                router.push('/projects');
+            }
+        }
+        checkAuth();
+    }, [router]);
+
     const handleGitHubSignup = async () => {
         setIsLoading(true);
         setError(null);

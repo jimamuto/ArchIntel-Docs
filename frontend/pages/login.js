@@ -19,6 +19,17 @@ export default function Login() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
 
+    useEffect(() => {
+        async function checkAuth() {
+            const { getSession } = await import('../lib/auth_utils');
+            const session = await getSession();
+            if (session) {
+                router.push('/projects');
+            }
+        }
+        checkAuth();
+    }, [router]);
+
     const handleGitHubLogin = async () => {
         setIsLoading(true);
         setError(null);

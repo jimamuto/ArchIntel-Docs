@@ -1,5 +1,6 @@
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
 import { getSession } from '@/lib/auth_utils';
 import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
@@ -76,6 +77,7 @@ const DiffMockup = () => (
 );
 
 export default function LandingPage() {
+  const router = useRouter();
   const [isScrolled, setIsScrolled] = useState(false);
   const [showWaitlist, setShowWaitlist] = useState(false);
   const [email, setEmail] = useState('');
@@ -86,10 +88,13 @@ export default function LandingPage() {
   useEffect(() => {
     async function checkUser() {
       const session = await getSession();
-      if (session) setUser(session.user);
+      if (session) {
+        setUser(session.user);
+        router.push('/projects');
+      }
     }
     checkUser();
-  }, []);
+  }, [router]);
 
   const handleWaitlist = (e) => {
     e.preventDefault();
