@@ -37,7 +37,7 @@ export const signInWithGitHub = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-            redirectTo: `${window.location.origin}/projects`,
+            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/projects`,
         }
     });
 
@@ -50,7 +50,7 @@ export const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-            redirectTo: `${window.location.origin}/projects`,
+            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/projects`,
         }
     });
 
