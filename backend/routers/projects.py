@@ -233,9 +233,9 @@ LANGUAGE_EXTENSIONS = {
     '.ini': 'ini', '.cfg': 'config', '.conf': 'config', '.properties': 'properties',
 }
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# SUPABASE_URL = os.getenv("SUPABASE_URL")
+# SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @router.get("")
 def get_projects(user = Depends(get_current_user), supabase: Client = Depends(get_supabase_client)):
@@ -299,6 +299,8 @@ async def register_project(request: Request, user = Depends(get_current_user), s
             arq_pool = getattr(app_state, "arq_pool", None)
             if arq_pool:
                 await arq_pool.enqueue_job("analyze_project_task", project["id"])
+                # Update status to analyzing to trigger frontend polling
+                supabase.table("projects").update({"status": "analyzing"}).eq("id", project["id"]).execute()
             else:
                 print(f"Warning: Background analysis skipped for project {project['id']} (Redis unavailable)")
         
