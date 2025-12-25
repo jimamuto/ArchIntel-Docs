@@ -37,6 +37,7 @@ import Head from 'next/head';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import mermaid from 'mermaid';
+import DOMPurify from 'dompurify';
 
 // Initialize mermaid
 if (typeof window !== 'undefined') {
@@ -47,6 +48,98 @@ if (typeof window !== 'undefined') {
     fontFamily: 'Inter, sans-serif',
   });
 }
+
+// Enhanced chart validation function
+const validateMermaidContent = (chartContent) => {
+  if (!chartContent || typeof chartContent !== 'string') {
+    throw new Error('Invalid chart content');
+  }
+
+  // Check for common XSS patterns
+  const dangerousPatterns = [
+    /<script[\s\S]*?>[\s\S]*?<\/script>/gi,
+    /javascript:/gi,
+    /data:\s*text\/javascript/gi,
+    /on\w+\s*=/gi,
+    /<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi,
+    /<object[\s\S]*?>[\s\S]*?<\/object>/gi,
+    /<embed[\s\S]*?>[\s\S]*?<\/embed>/gi,
+    /<form[\s\S]*?>[\s\S]*?<\/form>/gi,
+    /<input[\s\S]*?>/gi
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(chartContent)) {
+      throw new Error('Potentially malicious content detected in chart');
+    }
+  }
+
+  // Limit content size to prevent DoS
+  if (chartContent.length > 50000) {
+    throw new Error('Chart content too large');
+  }
+
+  // Validate Mermaid syntax (basic check)
+  const mermaidKeywords = ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'erDiagram', 'journey', 'gantt', 'pie', 'requirementDiagram'];
+  const trimmed = chartContent.trim();
+  const hasValidKeyword = mermaidKeywords.some(keyword => 
+    trimmed.toLowerCase().startsWith(keyword.toLowerCase())
+  );
+
+  if (!hasValidKeyword && !trimmed.startsWith('%%')) {
+    throw new Error('Invalid Mermaid syntax');
+  }
+
+  return true;
+};
+
+// Secure SVG rendering with sanitization
+const sanitizeAndRenderSVG = (svgContent) => {
+  try {
+    // Configure DOMPurify for SVG content
+    const config = {
+      USE_PROFILES: { svg: true, svgFilters: true },
+      ADD_ATTR: ['target'], // Allow safe attributes
+      FORBID_ATTR: [
+        'onerror', 'onload', 'onclick', 'onmouseover', 'onmouseout',
+        'onfocus', 'onblur', 'onkeydown', 'onkeyup', 'onkeypress'
+      ], // Explicitly forbid dangerous attributes
+      ADD_TAGS: ['foreignobject'], // Allow SVG foreignObject if needed
+    };
+    
+    // Sanitize the SVG content
+    const cleanSVG = DOMPurify.sanitize(svgContent, config);
+    
+    // Additional validation for SVG structure
+    if (!cleanSVG.includes('<svg') || !cleanSVG.includes('</svg>')) {
+      throw new Error('Invalid SVG structure');
+    }
+    
+    return cleanSVG;
+  } catch (error) {
+    console.error('SVG sanitization failed:', error);
+    throw new Error('Failed to sanitize SVG content');
+  }
+};
+
+// Secure error handling function
+const handleMermaidError = (error) => {
+  console.error('Mermaid rendering error:', error);
+  
+  // Don't expose detailed error information to users
+  if (error?.message?.includes('malicious') || 
+      error?.message?.includes('script') || 
+      error?.message?.includes('XSS')) {
+    return 'Failed to render diagram: Invalid content detected';
+  }
+  
+  if (error?.message?.includes('syntax') || 
+      error?.message?.includes('parse')) {
+    return 'Failed to render diagram: Please check the syntax';
+  }
+  
+  return 'Failed to render diagram: Please try again';
+};
 
 // --- Mermaid Component ---
 const Mermaid = ({ chart }) => {
@@ -71,6 +164,14 @@ const Mermaid = ({ chart }) => {
       // Also fix the variant without the initial arrow: --|text|>
       cleanedChart = cleanedChart.replace(/--\|([^|]+)\|>/g, '--|"$1"|');
 
+      // Validate content before processing
+      try {
+        validateMermaidContent(cleanedChart);
+      } catch (validationError) {
+        setError(validationError.message);
+        return;
+      }
+
       // Ensure the chart starts with a valid Mermaid keyword (ignoring comments)
       const validKeywords = ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'erDiagram', 'journey', 'gantt', 'pie', 'requirementDiagram'];
       const lines = cleanedChart.split('\n');
@@ -92,16 +193,17 @@ const Mermaid = ({ chart }) => {
         mermaid.render(uniqueId, cleanedChart)
           .then(({ svg }) => {
             if (ref.current) {
-              ref.current.innerHTML = svg;
+              const sanitizedSVG = sanitizeAndRenderSVG(svg);
+              ref.current.innerHTML = sanitizedSVG;
             }
           })
           .catch((err) => {
             console.error('Mermaid async error:', err);
-            setError(err?.message || 'Syntax error in diagram description');
+            setError(handleMermaidError(err));
           });
       } catch (err) {
         console.error('Mermaid sync error:', err);
-        setError(err?.message || 'Failed to initialize rendering');
+        setError(handleMermaidError(err));
       }
     }
   }, [chart]);
@@ -110,7 +212,7 @@ const Mermaid = ({ chart }) => {
     return (
       <div className="my-6 p-6 rounded-xl border border-red-500/20 bg-red-500/5 text-center">
         <p className="text-sm text-red-400 font-medium mb-1">Visual Generation Error</p>
-        <p className="text-xs text-red-400/70 font-mono">{error}</p>
+        <p className="text-xs text-red-400/70 font-mono">{handleMermaidError(new Error(error))}</p>
         <details className="mt-3 text-left">
           <summary className="text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 underline uppercase tracking-widest">Show Source Code</summary>
           <pre className="mt-2 p-3 bg-black/40 rounded text-[10px] text-gray-400 overflow-x-auto border border-white/5">

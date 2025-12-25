@@ -13,6 +13,11 @@ import base64
 import subprocess
 import tempfile
 import shutil
+import logging
+
+# Import security modules
+from services.subprocess_security import secure_subprocess, execute_git_clone, SecurityError
+from services.url_validator import url_validator, is_valid_repository_url, sanitize_repository_url, URLValidationError
 from datetime import datetime
 router = APIRouter()
 
@@ -133,23 +138,72 @@ async def get_file_llm_documentation(
 
         repo_path_full = resolve_repo_path(repo_path)
 
-        abs_path = os.path.abspath(os.path.join(repo_path_full, path))
-        # Security: Ensure abs_path is within repo_path
-        if not abs_path.startswith(os.path.abspath(repo_path_full)):
-            return "Error: Invalid file path - access denied for security reasons."
+# Security: Use secure path validation instead of basic string check
+        try:
+            # Use pathlib for secure path resolution
+            repo_path_obj = pathlib.Path(repo_path_full).resolve()
+            file_path_obj = (repo_path_obj / path).resolve()
+            
+            # Security check: Ensure file_path is within repo_path
+            try:
+                file_path_obj.relative_to(repo_path_obj)
+            except ValueError:
+                # Log security event
+                security_logger = logging.getLogger("archintel.security")
+                security_logger.warning(f"Path traversal attempt blocked: {path} resolves to {file_path_obj} which is outside {repo_path_obj}")
+                return "Error: Invalid file path - access denied for security reasons."
+                
+            # Additional check for symlinks
+            if file_path_obj.is_symlink():
+                link_target = file_path_obj.resolve()
+                try:
+                    link_target.relative_to(repo_path_obj)
+                except ValueError:
+                    # Symlink points outside base directory
+                    security_logger = logging.getLogger("archintel.security")
+                    security_logger.warning(f"Symlink security violation: {file_path_obj} points outside {repo_path_obj}")
+                    return "Error: Invalid file path - symlink access denied for security reasons."
+                    
+            abs_path = str(file_path_obj)
+            
+        except Exception as e:
+            # Log the error for debugging
+            security_logger = logging.getLogger("archintel.security")
+            security_logger.error(f"Path validation failed for {path}: {e}")
+            return f"Error validating file path: {str(e)}"
 
-        # Check if repo_path exists locally
+# Check if repo_path exists locally
         if not os.path.exists(repo_path_full):
             # Repository not found locally, clone it temporarily
             # Get project details to get repo URL
             project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
             project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
 
-            # Clone repository temporarily
-            temp_dir = tempfile.mkdtemp()
-            result = subprocess.run(["git", "clone", "--depth", "1", project["repo_url"], repo_path_full], capture_output=True, text=True)
-            if result.returncode != 0:
-                return f"Error: Failed to clone repository - {result.stderr}"
+            try:
+                # Validate repository URL
+                repo_url = project["repo_url"]
+                if not is_valid_repository_url(repo_url):
+                    return f"Error: Invalid repository URL format - {sanitize_repository_url(repo_url)}"
+                
+                # Clone repository temporarily using secure subprocess
+                temp_dir = tempfile.mkdtemp()
+                result = execute_git_clone(repo_url, repo_path_full, timeout=300)
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr or "Unknown error during git clone"
+                    # Log security event for failed clone
+                    security_logger.warning(f"Failed git clone attempt for project {project_id}: {sanitize_repository_url(repo_url)} - {error_msg}")
+                    return f"Error: Failed to clone repository - {error_msg}"
+                    
+            except SecurityError as e:
+                security_logger.error(f"Security violation during git clone for project {project_id}: {str(e)}")
+                return f"Error: Security violation during repository clone - {str(e)}"
+            except URLValidationError as e:
+                security_logger.warning(f"Invalid URL validation for project {project_id}: {str(e)}")
+                return f"Error: Invalid repository URL - {str(e)}"
+            except Exception as e:
+                security_logger.error(f"Unexpected error during git clone for project {project_id}: {str(e)}")
+                return f"Error: Failed to clone repository - {str(e)}"
 
         if not os.path.exists(abs_path):
             return f"Error: File not found - {path}"
@@ -409,14 +463,38 @@ async def get_system_documentation(
 
         repo_path_full = resolve_repo_path(repo_path)
 
-        # Check if repo_path exists locally
+# Check if repo_path exists locally
         if not os.path.exists(repo_path_full):
             # Repository not found locally, clone it temporarily
-            # Clone repository temporarily
-            temp_dir = tempfile.mkdtemp()
-            result = subprocess.run(["git", "clone", "--depth", "1", project["repo_url"], repo_path_full], capture_output=True, text=True)
-            if result.returncode != 0:
-                return f"Error: Failed to clone repository - {result.stderr}"
+            # Get project information
+            project_response = supabase.table("projects").select("name, repo_url").eq("id", project_id).execute()
+            project = project_response.data[0] if hasattr(project_response, 'data') and project_response.data else project_response["data"][0]
+
+            try:
+                # Validate repository URL
+                repo_url = project["repo_url"]
+                if not is_valid_repository_url(repo_url):
+                    return f"Error: Invalid repository URL format - {sanitize_repository_url(repo_url)}"
+                
+                # Clone repository temporarily using secure subprocess
+                temp_dir = tempfile.mkdtemp()
+                result = execute_git_clone(repo_url, repo_path_full, timeout=300)
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr or "Unknown error during git clone"
+                    # Log security event for failed clone
+                    security_logger.warning(f"Failed git clone attempt for system documentation (project {project_id}): {sanitize_repository_url(repo_url)} - {error_msg}")
+                    return f"Error: Failed to clone repository - {error_msg}"
+                    
+            except SecurityError as e:
+                security_logger.error(f"Security violation during git clone for system documentation (project {project_id}): {str(e)}")
+                return f"Error: Security violation during repository clone - {str(e)}"
+            except URLValidationError as e:
+                security_logger.warning(f"Invalid URL validation for system documentation (project {project_id}): {str(e)}")
+                return f"Error: Invalid repository URL - {str(e)}"
+            except Exception as e:
+                security_logger.error(f"Unexpected error during git clone for system documentation (project {project_id}): {str(e)}")
+                return f"Error: Failed to clone repository - {str(e)}"
 
         # Collect all code files in the project
         code_files = []

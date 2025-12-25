@@ -8,6 +8,10 @@ from arq.connections import RedisSettings
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
+# Import security modules
+from services.subprocess_security import secure_subprocess, SecurityError, execute_git_clone
+from services.url_validator import url_validator, is_valid_repository_url, sanitize_repository_url, URLValidationError
+
 from llm_groq import generate_doc_with_groq
 from services.ast_parser import parse_code_structure
 
@@ -64,28 +68,34 @@ async def analyze_project_task(ctx, project_id: str):
         temp_dir = tempfile.mkdtemp()
         repo_dir = os.path.join(temp_dir, "repo")
 
-        try:
-            # Prepare clone command
-            clone_cmd = ["git", "clone", "--depth", "1", repo_url, repo_dir]
-            if github_token:
-                github_match = re.match(r'https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
-                if github_match:
-                    owner, repo = github_match.groups()
-                    auth_repo_url = f"https://{github_token}@github.com/{owner}/{repo}.git"
-                    clone_cmd = ["git", "clone", "--depth", "1", auth_repo_url, repo_dir]
-
-            # Set environment to prevent git from hanging on credentials prompt
-            env = os.environ.copy()
-            env["GIT_TERMINAL_PROMPT"] = "0"
-
-            result = subprocess.run(clone_cmd, capture_output=True, text=True, env=env)
-            if result.returncode != 0:
-                error_msg = result.stderr
+try:
+                # Validate repository URL
+                if not is_valid_repository_url(repo_url):
+                    raise URLValidationError(f"Invalid repository URL: {sanitize_repository_url(repo_url)}")
+                
+                # Prepare clone command with security validation
+                clone_cmd = ["git", "clone", "--depth", "1", repo_url, repo_dir]
                 if github_token:
-                    error_msg = error_msg.replace(github_token, "[REDACTED]")
-                supabase.table("projects").update({"status": "error"}).eq("id", pid).execute()
-                print(f"Clone failed for project {pid}: {error_msg}")
-                return
+                    github_match = re.match(r'https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$', repo_url)
+                    if github_match:
+                        owner, repo = github_match.groups()
+                        auth_repo_url = f"https://{github_token}@github.com/{owner}/{repo}.git"
+                        clone_cmd = ["git", "clone", "--depth", "1", auth_repo_url, repo_dir]
+
+                # Set environment to prevent git from hanging on credentials prompt
+                env = os.environ.copy()
+                env["GIT_TERMINAL_PROMPT"] = "0"
+
+                # Execute clone using secure subprocess
+                result = execute_git_clone(repo_url, repo_dir, timeout=300)
+                
+                if result.returncode != 0:
+                    error_msg = result.stderr
+                    if github_token:
+                        error_msg = error_msg.replace(github_token, "[REDACTED]")
+                    supabase.table("projects").update({"status": "error"}).eq("id", pid).execute()
+                    print(f"Clone failed for project {pid}: {error_msg}")
+                    return
 
             # Scan files
             files_to_insert = []

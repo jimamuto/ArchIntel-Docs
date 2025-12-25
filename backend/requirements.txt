@@ -9,3 +9,6 @@ httpx
 pydantic-settings
 arq
 redis
+jose[ cryptography]
+passlib[bcrypt]
+python-multipart

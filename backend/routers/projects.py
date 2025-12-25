@@ -10,9 +10,17 @@ import ast
 import gzip
 import hashlib
 import base64
+import logging
 from datetime import datetime
 
 from routers.auth import get_current_user, get_supabase_client
+
+# Import validation models
+from schemas.projects import (
+    ProjectCreateRequest, ProjectIngestRequest, ProjectSyncRequest,
+    ProjectPathRequest, ProjectIdRequest, ProjectSearchRequest
+)
+from schemas.security import ValidationError, SecurityValidationConfig
 
 router = APIRouter()
 
@@ -104,10 +112,39 @@ def get_file_code(project_id: str, path: str = Query(..., description="Relative 
         else:
             repo_path_full = repo_path
 
-        abs_path = os.path.abspath(os.path.join(repo_path_full, path))
-        # Security: Ensure abs_path is within repo_path
-        if not abs_path.startswith(os.path.abspath(repo_path_full)):
-            return "// Invalid file path - access denied for security reasons."
+# Security: Use secure path validation instead of basic string check
+        try:
+            # Use pathlib for secure path resolution
+            repo_path_obj = pathlib.Path(repo_path_full).resolve()
+            file_path_obj = (repo_path_obj / path).resolve()
+            
+            # Security check: Ensure file_path is within repo_path
+            try:
+                file_path_obj.relative_to(repo_path_obj)
+            except ValueError:
+                # Log security event
+                security_logger = logging.getLogger("archintel.security")
+                security_logger.warning(f"Path traversal attempt blocked: {path} resolves to {file_path_obj} which is outside {repo_path_obj}")
+                return "// Invalid file path - access denied for security reasons."
+                
+            # Additional check for symlinks
+            if file_path_obj.is_symlink():
+                link_target = file_path_obj.resolve()
+                try:
+                    link_target.relative_to(repo_path_obj)
+                except ValueError:
+                    # Symlink points outside base directory
+                    security_logger = logging.getLogger("archintel.security")
+                    security_logger.warning(f"Symlink security violation: {file_path_obj} points outside {repo_path_obj}")
+                    return "// Invalid file path - symlink access denied for security reasons."
+                    
+            abs_path = str(file_path_obj)
+            
+        except Exception as e:
+            # Log the error for debugging
+            security_logger = logging.getLogger("archintel.security")
+            security_logger.error(f"Path validation failed for {path}: {e}")
+            return f"// Error validating file path: {str(e)}"
 
         # Check if repo_path exists locally
         if not os.path.exists(repo_path_full):
