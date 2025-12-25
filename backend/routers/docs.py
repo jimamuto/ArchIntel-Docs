@@ -31,8 +31,22 @@ from routers.auth import get_supabase_client
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+
+# Lazy initialization - only create client when needed
+supabase: Optional[Client] = None
+
+def get_supabase_client() -> Client:
+    """Get or create Supabase client instance"""
+    global supabase
+    if supabase is None:
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("Supabase credentials not configured. Database operations will fail.")
+            raise HTTPException(status_code=500, detail="Database configuration incomplete")
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return supabase
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 

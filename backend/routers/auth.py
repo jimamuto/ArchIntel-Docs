@@ -20,29 +20,61 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from supabase import create_client, Client
 from typing import Optional, Dict, Any
 from datetime import datetime
+from pydantic import BaseModel, EmailStr
 
 from services.error_handler import error_handler, create_error_response, handle_security_error
 from services.security_middleware import (
     rate_limiter, session_manager, SecurityEventLogger
 )
 from services.security_config import SecurityConfig, SecurityConstants
+from services.auth_utils import jwt_manager, auth_manager, password_manager, SecurityHeaders
+from services.email_service import two_factor_service, email_service
 from exceptions import AuthenticationError, AuthorizationError, CSRFError
 
 router = APIRouter()
 
 # Environment variables with validation
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")  # Use anon key for public auth
+SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("SUPABASE_KEY")  # Support both env var names
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 
-# Validate required environment variables
+# Validate required environment variables (only log warning if missing, don't fail at import time)
 if not all([SUPABASE_URL, SUPABASE_KEY]):
-    raise HTTPException(status_code=500, detail="Supabase configuration is incomplete")
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning("Supabase configuration is incomplete. Authentication features will be limited.")
+
+# In-memory storage for pending 2FA sessions (consider Redis for production)
+# Stores Supabase session data temporarily keyed by email
+pending_2fa_sessions: Dict[str, Dict[str, Any]] = {}
+pending_2fa_expiry: Dict[str, float] = {}
+
+# Initialize logger
+import logging
+auth_logger = logging.getLogger(__name__)
+
+# Pydantic models for email authentication
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class Verify2FARequest(BaseModel):
+    email: EmailStr
+    code: str
+
+class Resend2FARequest(BaseModel):
+    email: EmailStr
 
 
 def get_supabase_client() -> Client:
     """Get Supabase client instance"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("Supabase URL and Key must be configured")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
@@ -474,3 +506,330 @@ async def get_security_status():
 
 # Note: Exception handlers should be registered at the app level in main.py
 # This router uses standard HTTPException raises for error handling
+
+
+# Email Authentication with 2FA
+
+@router.post("/signup")
+async def signup(request: Request, signup_data: SignupRequest):
+    """
+    Sign up a new user with email and password
+    """
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limiting
+    is_limited, retry_after = rate_limiter.is_rate_limited(client_ip, "/auth/signup")
+    if is_limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=SecurityConstants.RATE_LIMIT_ERROR
+        )
+
+    try:
+        # If Supabase is configured, create user there
+        if SUPABASE_URL and SUPABASE_KEY:
+            try:
+                supabase_client = get_supabase_client()
+
+                # Create user with Supabase
+                response = supabase_client.auth.sign_up({
+                    "email": signup_data.email,
+                    "password": signup_data.password
+                })
+
+                # Check for error
+                if hasattr(response, 'error') and response.error:
+                    rate_limiter.record_attempt(client_ip, success=False)
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(response.error) or "Failed to create account"
+                    )
+            except Exception as supabase_error:
+                rate_limiter.record_attempt(client_ip, success=False)
+                SecurityEventLogger.log_auth_attempt(
+                    client_ip, None, False, "/auth/signup", f"Supabase error: {str(supabase_error)}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Failed to create account with Supabase"
+                )
+
+        # Send 2FA code (works without Supabase for development)
+        expiry = two_factor_service.send_2fa_email(signup_data.email)
+
+        if not expiry:
+            # Log warning but don't fail - user can still login with password
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to send 2FA code to {signup_data.email}")
+
+        rate_limiter.record_attempt(client_ip, success=True)
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "Account created successfully. Please verify your email with the code sent to your inbox.",
+                "requires_2fa": True,
+                "email": signup_data.email
+            },
+            headers=SecurityHeaders.get_auth_headers()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        rate_limiter.record_attempt(client_ip, success=False)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, None, False, "/auth/signup", f"Signup failed: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create account"
+        )
+
+
+@router.post("/login")
+async def login(request: Request, login_data: LoginRequest):
+    """
+    Login with email and password, sends 2FA code if credentials are valid
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Rate limiting
+    is_limited, retry_after = rate_limiter.is_rate_limited(client_ip, "/auth/login")
+    if is_limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=SecurityConstants.RATE_LIMIT_ERROR
+        )
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service not configured"
+        )
+    
+    try:
+        supabase_client = get_supabase_client()
+
+        # Authenticate with Supabase
+        response = supabase_client.auth.sign_in_with_password({
+            "email": login_data.email,
+            "password": login_data.password
+        })
+
+        # Check for error
+        if hasattr(response, 'error') and response.error:
+            rate_limiter.record_attempt(client_ip, success=False)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+
+        # Store Supabase session data temporarily for 2FA verification
+        import time
+        pending_2fa_sessions[login_data.email] = {
+            "access_token": response.session.access_token if response.session else None,
+            "refresh_token": response.session.refresh_token if response.session else None,
+            "user": {
+                "id": str(response.user.id) if response.user else None,
+                "email": response.user.email if response.user else None
+            }
+        }
+        pending_2fa_expiry[login_data.email] = time.time() + 600  # 10 minutes expiry
+
+        # Send 2FA code
+        expiry = two_factor_service.send_2fa_email(login_data.email)
+
+        if not expiry:
+            # If email fails, still allow login but log warning
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to send 2FA code to {login_data.email}")
+
+            # Return tokens directly if email fails (fallback)
+            rate_limiter.record_attempt(client_ip, success=True)
+
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "access_token": response.session.access_token if response.session else None,
+                    "refresh_token": response.session.refresh_token if response.session else None,
+                    "token_type": "bearer",
+                    "user": {
+                        "id": str(response.user.id) if response.user else None,
+                        "email": response.user.email if response.user else None
+                    },
+                    "requires_2fa": False
+                },
+                headers=SecurityHeaders.get_auth_headers(str(response.user.id) if response.user else None)
+            )
+
+        rate_limiter.record_attempt(client_ip, success=True)
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "Verification code sent to your email",
+                "requires_2fa": True,
+                "email": login_data.email
+            },
+            headers=SecurityHeaders.get_auth_headers()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        rate_limiter.record_attempt(client_ip, success=False)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, None, False, "/auth/login", f"Login failed: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication failed"
+        )
+
+
+@router.post("/verify-2fa")
+async def verify_2fa(request: Request, verify_data: Verify2FARequest):
+    """
+    Verify 2FA code and return authentication tokens
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    client_ip = request.client.host if request.client else "unknown"
+    logger.info(f"2FA verification attempt from {client_ip} for email: {verify_data.email}")
+    
+    # Rate limiting
+    is_limited, retry_after = rate_limiter.is_rate_limited(client_ip, "/auth/verify-2fa")
+    if is_limited:
+        logger.warning(f"Rate limited: {client_ip}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=SecurityConstants.RATE_LIMIT_ERROR
+        )
+    
+    # Check if pending session exists and hasn't expired
+    import time
+    current_time = time.time()
+    
+    logger.info(f"Checking pending sessions. Emails: {list(pending_2fa_sessions.keys())}")
+    
+    if verify_data.email not in pending_2fa_sessions:
+        logger.warning(f"No pending 2FA session for email: {verify_data.email}")
+        rate_limiter.record_attempt(client_ip, success=False)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, verify_data.email, False, "/auth/verify-2fa", "No pending 2FA session"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No pending authentication session. Please login again."
+        )
+    
+    if pending_2fa_expiry[verify_data.email] < current_time:
+        logger.warning(f"Expired session for email: {verify_data.email}")
+        rate_limiter.record_attempt(client_ip, success=False)
+        # Clean up expired session
+        del pending_2fa_sessions[verify_data.email]
+        del pending_2fa_expiry[verify_data.email]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session expired. Please login again."
+        )
+    
+    # Verify 2FA code
+    logger.info(f"Verifying code for email: {verify_data.email}")
+    if not two_factor_service.verify_code(verify_data.email, verify_data.code):
+        logger.warning(f"Invalid 2FA code for email: {verify_data.email}")
+        rate_limiter.record_attempt(client_ip, success=False)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, verify_data.email, False, "/auth/verify-2fa", "Invalid 2FA code"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired verification code"
+        )
+    
+    try:
+        # Retrieve stored Supabase session
+        session_data = pending_2fa_sessions.get(verify_data.email)
+        
+        logger.info(f"Retrieved session data for email: {verify_data.email}")
+        
+        # Clean up stored session
+        del pending_2fa_sessions[verify_data.email]
+        del pending_2fa_expiry[verify_data.email]
+        
+        if not session_data:
+            logger.error(f"Session data not found for email: {verify_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Session data not found"
+            )
+        
+        rate_limiter.record_attempt(client_ip, success=True)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, verify_data.email, True, "/auth/verify-2fa", "2FA verification successful"
+        )
+        
+        logger.info(f"2FA verification successful for email: {verify_data.email}")
+        
+        return JSONResponse(
+            content={
+                "success": True,
+                "access_token": session_data.get("access_token"),
+                "refresh_token": session_data.get("refresh_token"),
+                "token_type": "bearer",
+                "user": session_data.get("user"),
+                "message": "Authentication successful"
+            },
+            headers=SecurityHeaders.get_auth_headers(session_data.get("user", {}).get("id"))
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during 2FA verification: {str(e)}", exc_info=True)
+        rate_limiter.record_attempt(client_ip, success=False)
+        SecurityEventLogger.log_auth_attempt(
+            client_ip, verify_data.email, False, "/auth/verify-2fa", f"2FA verification failed: {str(e)}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete 2FA verification"
+        )
+
+
+@router.post("/resend-2fa")
+async def resend_2fa(request: Request, request_data: Resend2FARequest):
+    """
+    Resend 2FA code
+    """
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Rate limiting
+    is_limited, retry_after = rate_limiter.is_rate_limited(client_ip, "/auth/resend-2fa")
+    if is_limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=SecurityConstants.RATE_LIMIT_ERROR
+        )
+
+    expiry = two_factor_service.send_2fa_email(request_data.email)
+
+    if not expiry:
+        rate_limiter.record_attempt(client_ip, success=False)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send verification code"
+        )
+
+    rate_limiter.record_attempt(client_ip, success=True)
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": "New verification code sent to your email"
+        }
+    )

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import {
     Settings as SettingsIcon,
     Cpu,
@@ -9,16 +10,23 @@ import {
     Database,
     RefreshCw,
     Clock,
-    LogOut
+    LogOut,
+    X
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { useToast } from '../lib/toast';
 import { logout, authenticatedFetch } from '../lib/auth_utils';
+import { Modal } from '../components/Modal';
 
 export default function SettingsPage() {
+    const router = useRouter();
     const { success: showToast, error: showError } = useToast();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+    const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+    const [pendingRoute, setPendingRoute] = useState(null);
+    const [originalSettings, setOriginalSettings] = useState({});
     const [settings, setSettings] = useState({
         ai_provider: 'Groq',
         model: 'llama-3.3-70b-versatile',
@@ -36,10 +44,48 @@ export default function SettingsPage() {
             const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/system/settings`);
             const data = await res.json();
             setSettings(data);
+            setOriginalSettings(data);
         } catch (err) {
-            showError("Failed to load settings");
+            showError("Failed to load settings", "Unable to retrieve settings from the server. Please refresh and try again.");
         } finally {
             setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        setHasUnsavedChanges(JSON.stringify(settings) !== JSON.stringify(originalSettings));
+    }, [settings, originalSettings]);
+
+    useEffect(() => {
+        const handleRouteChange = (url) => {
+            if (hasUnsavedChanges) {
+                setPendingRoute(url);
+                setShowUnsavedModal(true);
+                router.events.emit('routeChangeError');
+                throw 'Aborted';
+            }
+        };
+
+        router.events.on('routeChangeStart', handleRouteChange);
+
+        return () => {
+            router.events.off('routeChangeStart', handleRouteChange);
+        };
+    }, [hasUnsavedChanges, router]);
+
+    const handleUnsavedDiscard = () => {
+        setHasUnsavedChanges(false);
+        setShowUnsavedModal(false);
+        if (pendingRoute) {
+            router.push(pendingRoute);
+        }
+    };
+
+    const handleUnsavedSave = async () => {
+        await handleSave();
+        setShowUnsavedModal(false);
+        if (pendingRoute) {
+            router.push(pendingRoute);
         }
     };
 
@@ -52,10 +98,14 @@ export default function SettingsPage() {
                 body: JSON.stringify(settings)
             });
             if (res.ok) {
-                showToast("Settings saved successfully");
+                showToast("Settings saved successfully", "Your changes have been applied.");
+                setOriginalSettings({ ...settings });
+            } else {
+                const errorData = await res.json().catch(() => ({}));
+                throw new Error(errorData.detail || errorData.message || 'Unable to save settings');
             }
         } catch (err) {
-            showError("Failed to save settings");
+            showError("Failed to save settings", err.message || 'Please check your connection and try again.');
         } finally {
             setSaving(false);
         }
@@ -226,5 +276,43 @@ export default function SettingsPage() {
                 </div>
             </div>
         </div>
+
+        {/* Unsaved Changes Modal */}
+        <Modal
+            isOpen={showUnsavedModal}
+            onClose={() => setShowUnsavedModal(false)}
+            title="Unsaved Changes"
+            size="md"
+        >
+            <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                        <RefreshCw className="w-6 h-6 text-amber-500" />
+                    </div>
+                    <div>
+                        <p className="text-sm text-accessible-subtle">
+                            You have unsaved changes. Would you like to save them before leaving?
+                        </p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 pt-4">
+                    <Button
+                        variant="outline"
+                        onClick={handleUnsavedDiscard}
+                        className="h-12 border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05] text-gray-400 rounded-xl font-bold"
+                    >
+                        Discard Changes
+                    </Button>
+                    <Button
+                        onClick={handleUnsavedSave}
+                        disabled={saving}
+                        className="h-12 bg-aurora-purple hover:bg-aurora-purple/80 text-white font-bold rounded-xl"
+                    >
+                        {saving ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                </div>
+            </div>
+        </Modal>
     );
 }

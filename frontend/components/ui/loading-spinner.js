@@ -1,27 +1,27 @@
 import * as React from "react"
 import { motion } from "framer-motion"
 
-export function LoadingSpinner({ 
-  size = "md", 
-  className, 
+export function LoadingSpinner({
+  size = "md",
+  className,
   text,
   variant = "dots"
 }) {
   const sizeClasses = {
     sm: "w-4 h-4",
-    md: "w-6 h-6", 
+    md: "w-6 h-6",
     lg: "w-8 h-8"
   }
 
   if (variant === "dots") {
     return (
-      <div className={`flex items-center gap-2 ${className || ''}`}>
-        <div className="flex gap-1">
+      <div className={`flex items-center gap-2 ${className || ''}`} role="status" aria-live="polite">
+        <div className="flex gap-1" aria-hidden="true">
           {[0, 1, 2].map((i) => (
             <motion.div
               key={i}
               className={`w-2 h-2 rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500`}
-              animate={{ 
+              animate={{
                 y: [0, -8, 0],
                 opacity: [0.3, 1, 0.3]
               }}
@@ -35,29 +35,32 @@ export function LoadingSpinner({
           ))}
         </div>
         {text && <span className="text-sm text-slate-400">{text}</span>}
+        <span className="sr-only">{text || 'Loading...'}</span>
       </div>
     )
   }
 
   if (variant === "ring") {
     return (
-      <div className={`flex items-center gap-3 ${className || ''}`}>
+      <div className={`flex items-center gap-3 ${className || ''}`} role="status" aria-live="polite">
         <motion.div
           className={`rounded-full border-2 border-slate-700 border-t-cyan-500 ${sizeClasses[size]}`}
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          aria-hidden="true"
         />
         {text && <span className="text-sm text-slate-400">{text}</span>}
+        <span className="sr-only">{text || 'Loading...'}</span>
       </div>
     )
   }
 
   if (variant === "pulse") {
     return (
-      <div className={`flex items-center gap-3 ${className || ''}`}>
+      <div className={`flex items-center gap-3 ${className || ''}`} role="status" aria-live="polite">
         <motion.div
           className={`w-3 h-3 rounded-full bg-cyan-500`}
-          animate={{ 
+          animate={{
             scale: [1, 2, 1],
             opacity: [1, 0.3, 1]
           }}
@@ -66,8 +69,10 @@ export function LoadingSpinner({
             ease: "easeInOut",
             repeat: Infinity
           }}
+          aria-hidden="true"
         />
         {text && <span className="text-sm text-slate-400">{text}</span>}
+        <span className="sr-only">{text || 'Loading...'}</span>
       </div>
     )
   }
@@ -102,17 +107,17 @@ export function Skeleton({
   )
 }
 
-export function ProgressRing({ 
-  progress = 0, 
-  size = 80, 
+export function ProgressRing({
+  progress = 0,
+  size = 80,
   strokeWidth = 8,
-  className 
+  className
 }) {
   const radius = (size - strokeWidth) / 2
   const circumference = radius * 2 * Math.PI
 
   return (
-    <div className={`relative ${className || ''}`} style={{ width: size, height: size }}>
+    <div className={`relative ${className || ''}`} style={{ width: size, height: size }} role="progressbar" aria-valuenow={Math.round(progress * 100)} aria-valuemin={0} aria-valuemax={100}>
       <svg className="rotate-[-90deg]" width={size} height={size}>
         <circle
           cx={size / 2}
@@ -131,7 +136,7 @@ export function ProgressRing({
           fill="transparent"
           strokeLinecap="round"
           initial={{ strokeDasharray: `${circumference} ${circumference}`, strokeDashoffset: circumference }}
-          animate={{ 
+          animate={{
             strokeDasharray: `${circumference} ${circumference}`,
             strokeDashoffset: circumference * (1 - Math.min(Math.max(progress, 0), 1))
           }}
@@ -154,7 +159,7 @@ export function ProgressRing({
 
 export function ToastContainer({ toasts, onDismiss }) {
   return (
-    <div className="fixed top-4 right-4 z-50 space-y-3">
+    <div className="fixed top-4 right-4 z-50 space-y-3" role="region" aria-live="polite" aria-label="Notifications">
       {toasts.map((toast) => (
         <motion.div
           key={toast.id}
@@ -162,6 +167,8 @@ export function ToastContainer({ toasts, onDismiss }) {
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 100, scale: 0.95 }}
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
+          role="alert"
+          aria-live={toast.type === "error" ? "assertive" : "polite"}
           className={`p-4 rounded-lg border border-slate-700/50 backdrop-blur-sm ${
             toast.type === "success" ? "bg-emerald-500/10 text-emerald-300" :
             toast.type === "error" ? "bg-rose-500/10 text-rose-300" :
@@ -175,7 +182,7 @@ export function ToastContainer({ toasts, onDismiss }) {
               toast.type === "error" ? "bg-rose-500" :
               toast.type === "warning" ? "bg-amber-500" :
               "bg-cyan-500"
-            }`} />
+            }`} aria-hidden="true" />
             <div className="flex-1">
               <div className="font-medium">{toast.title}</div>
               {toast.message && <div className="text-sm opacity-80 mt-1">{toast.message}</div>}
@@ -183,6 +190,7 @@ export function ToastContainer({ toasts, onDismiss }) {
             <button
               onClick={() => onDismiss(toast.id)}
               className="ml-2 p-1 rounded-md hover:bg-slate-700/50 transition-colors"
+              aria-label={`Dismiss ${toast.type} notification`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

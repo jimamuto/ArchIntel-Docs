@@ -113,4 +113,30 @@
     pointer-events: none;
     z-index: -1;
   }
+
+  /* Accessible text colors for dark backgrounds - WCAG AA compliant */
+  .text-accessible-subtle {
+    color: #9CA3AF;
+  }
+
+  .text-accessible-muted {
+    color: #D1D5DB;
+  }
+
+  .text-accessible-primary {
+    color: #F9FAFB;
+  }
+
+  /* Screen reader only utility */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }

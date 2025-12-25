@@ -23,7 +23,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 from fastapi import Request, Response, HTTPException
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import JSONResponse
 
@@ -366,7 +366,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
-        
+
         # Security headers
         security_headers = {
             "X-Content-Type-Options": "nosniff",
@@ -376,14 +376,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "Content-Security-Policy": "default-src 'self'",
             "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
         }
-        
+
         # Remove server information
-        response.headers.pop("server", None)
-        
+        if "server" in response.headers:
+            del response.headers["server"]
+
         # Add security headers
         for header, value in security_headers.items():
             response.headers[header] = value
-        
+
         return response
 
 

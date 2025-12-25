@@ -20,14 +20,18 @@ export default function Login() {
     const [error, setError] = useState(null);
 
     useEffect(() => {
+        let isMounted = true;
         async function checkAuth() {
             const { getSession } = await import('../lib/auth_utils');
             const session = await getSession();
-            if (session) {
+            if (session && isMounted) {
                 router.push('/projects');
             }
         }
         checkAuth();
+        return () => {
+            isMounted = false;
+        };
     }, [router]);
 
     const handleGitHubLogin = async () => {
@@ -60,13 +64,14 @@ export default function Login() {
         setError(null);
 
         try {
-            const { signInWithEmail, getMFAFactors } = await import('../lib/auth_utils');
-            await signInWithEmail(email, password);
+            const { signInWithEmail } = await import('../lib/auth_utils');
+            const result = await signInWithEmail(email, password);
 
-            // Check if user has 2FA enabled
-            const factors = await getMFAFactors();
-            if (factors && factors.totp && factors.totp.length > 0) {
-                router.push('/verify-2fa');
+            if (result.requires_2fa) {
+                router.push({
+                    pathname: '/verify-2fa',
+                    query: { email: email }
+                });
             } else {
                 router.push('/projects');
             }
@@ -130,14 +135,14 @@ export default function Login() {
                                 <Shield className="w-5 h-5 text-aurora-cyan" />
                                 <div>
                                     <p className="text-sm font-medium text-white">Enterprise Security</p>
-                                    <p className="text-xs text-gray-500">Your code never leaves your infrastructure</p>
+                                    <p className="text-xs text-accessible-subtle">Your code never leaves your infrastructure</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
                                 <Lock className="w-5 h-5 text-aurora-purple" />
                                 <div>
                                     <p className="text-sm font-medium text-white">End-to-End Encryption</p>
-                                    <p className="text-xs text-gray-500">All data encrypted in transit and at rest</p>
+                                    <p className="text-xs text-accessible-subtle">All data encrypted in transit and at rest</p>
                                 </div>
                             </div>
                         </div>
@@ -149,7 +154,7 @@ export default function Login() {
                     <div className="bg-[#0d1117]/80 backdrop-blur-xl border border-white/[0.08] rounded-3xl p-8 shadow-2xl">
                         <div className="mb-8">
                             <h3 className="text-2xl font-bold text-white mb-2">Sign in to your account</h3>
-                            <p className="text-sm text-gray-400">
+                            <p className="text-sm text-accessible-subtle">
                                 Don't have an account?{' '}
                                 <Link href="/signup" className="text-aurora-cyan hover:text-aurora-cyan/80 font-medium transition-colors">
                                     Sign up
@@ -169,9 +174,13 @@ export default function Login() {
                                 onClick={handleGitHubLogin}
                                 disabled={isLoading}
                                 className="w-full h-12 bg-[#24292F] hover:bg-[#24292F]/80 text-white border border-white/10 rounded-xl font-medium flex items-center justify-center gap-3 transition-all"
+                                aria-live="polite"
                             >
                                 {isLoading ? (
-                                    <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                                    <>
+                                        <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" aria-hidden="true" />
+                                        <span className="sr-only">Connecting to GitHub...</span>
+                                    </>
                                 ) : (
                                     <>
                                         <Github className="w-5 h-5" />
@@ -185,9 +194,13 @@ export default function Login() {
                                 onClick={handleGoogleLogin}
                                 disabled={isLoading}
                                 className="w-full h-12 bg-white hover:bg-white/90 text-gray-900 border border-white/10 rounded-xl font-medium flex items-center justify-center gap-3 transition-all"
+                                aria-live="polite"
                             >
                                 {isLoading ? (
-                                    <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-600 rounded-full animate-spin" />
+                                    <>
+                                        <div className="w-5 h-5 border-2 border-gray-200 border-t-gray-600 rounded-full animate-spin" aria-hidden="true" />
+                                        <span className="sr-only">Connecting to Google...</span>
+                                    </>
                                 ) : (
                                     <>
                                         <Search className="w-5 h-5 text-red-500" />
@@ -206,17 +219,18 @@ export default function Login() {
                             </div>
 
                             {/* Email Login Form */}
-                            <form onSubmit={handleEmailLogin} className="space-y-4">
+                            <form onSubmit={handleEmailLogin} className="space-y-4" noValidate>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-400 mb-2">Email address</label>
+                                    <label className="block text-xs font-medium text-accessible-subtle mb-2" htmlFor="email">Email address</label>
                                     <div className="relative">
-                                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                        <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-accessible-subtle" />
                                         <input
+                                            id="email"
                                             type="email"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
                                             placeholder="you@company.com"
-                                            className="w-full h-12 bg-[#0A0C10] border border-white/[0.08] rounded-xl pl-10 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 transition-all"
+                                            className="w-full h-12 bg-[#0A0C10] border border-white/[0.08] rounded-xl pl-10 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 transition-all"
                                             required
                                         />
                                     </div>
@@ -224,19 +238,20 @@ export default function Login() {
 
                                 <div>
                                     <div className="flex items-center justify-between mb-2">
-                                        <label className="block text-xs font-medium text-gray-400">Password</label>
-                                        <a href="#" className="text-xs text-aurora-cyan hover:text-aurora-cyan/80 transition-colors">
+                                        <label className="block text-xs font-medium text-accessible-subtle" htmlFor="password">Password</label>
+                                        <a href="/reset-password" className="text-xs text-aurora-cyan hover:text-aurora-cyan/80 transition-colors focus:outline-none focus:underline focus:underline-offset-2">
                                             Forgot password?
                                         </a>
                                     </div>
                                     <div className="relative">
-                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-accessible-subtle" />
                                         <input
+                                            id="password"
                                             type="password"
                                             value={password}
                                             onChange={(e) => setPassword(e.target.value)}
                                             placeholder="••••••••"
-                                            className="w-full h-12 bg-[#0A0C10] border border-white/[0.08] rounded-xl pl-10 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 transition-all"
+                                            className="w-full h-12 bg-[#0A0C10] border border-white/[0.08] rounded-xl pl-10 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 transition-all"
                                             required
                                         />
                                     </div>
@@ -254,8 +269,8 @@ export default function Login() {
                     </div>
 
                     {/* Mobile back button */}
-                    <Link href="/" className="md:hidden mt-6 inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors group">
-                        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+                    <Link href="/" className="md:hidden mt-6 inline-flex items-center gap-2 text-accessible-subtle hover:text-white transition-colors group focus:outline-none focus:ring-2 focus:ring-aurora-purple/50 rounded-md">
+                        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" aria-hidden="true" />
                         <span className="text-sm font-medium">Back to Home</span>
                     </Link>
                 </div>

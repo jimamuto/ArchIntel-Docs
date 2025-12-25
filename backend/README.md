@@ -11,7 +11,7 @@ This folder contains the FastAPI backend for the ArchIntel Docs MVP.
    ```
 2. Install dependencies:
    ```sh
-   pip install -r requirements.txt
+   pip install -r 
    ```
 3. Copy `.env.example` to `.env` and fill in your Supabase and Groq credentials.
 4. Run the FastAPI server:
@@ -31,7 +31,7 @@ This folder contains the FastAPI backend for the ArchIntel Docs MVP.
 - `POST /projects` – Register a project
 - `POST /projects/{id}/ingest/code` – Ingest code for a project
 - `GET /projects/{id}/structure` – Get code structure
-- `GET /docs/{project_id}` – Get generated docs
+- `requirements.txtGET /docs/{project_id}` – Get generated docs
 
 ## Troubleshooting
 

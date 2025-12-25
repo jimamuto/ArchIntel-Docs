@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
 
 // Create a Supabase client only if credentials are provided
 export const supabase = supabaseUrl && supabaseKey
@@ -15,6 +16,33 @@ export const getSession = async () => {
     }
 
     try {
+        // Check for stored tokens from 2FA flow
+        const storedAccessToken = localStorage.getItem('supabase_access_token');
+        const storedRefreshToken = localStorage.getItem('supabase_refresh_token');
+
+        if (storedAccessToken && storedRefreshToken) {
+            try {
+                // Set the session using stored tokens
+                const { data: { session }, error } = await supabase.auth.setSession({
+                    access_token: storedAccessToken,
+                    refresh_token: storedRefreshToken
+                });
+
+                if (!error && session) {
+                    // Clear stored tokens after setting session
+                    localStorage.removeItem('supabase_access_token');
+                    localStorage.removeItem('supabase_refresh_token');
+                    return session;
+                }
+            } catch (setSessionError) {
+                console.error('Error setting session from stored tokens:', setSessionError);
+                // Clear invalid tokens
+                localStorage.removeItem('supabase_access_token');
+                localStorage.removeItem('supabase_refresh_token');
+            }
+        }
+
+        // Fall back to existing session
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) return null;
         return session;
@@ -37,7 +65,7 @@ export const signInWithGitHub = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/projects`,
+            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth-callback`,
         }
     });
 
@@ -50,7 +78,7 @@ export const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/projects`,
+            redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth-callback`,
         }
     });
 
@@ -67,31 +95,76 @@ export const authenticatedFetch = async (url, options = {}) => {
     return fetch(url, { ...options, headers });
 };
 
-// Email Authentication Functions
+// Email Authentication Functions with 2FA
 export const signUpWithEmail = async (email, password) => {
-    if (!supabase) throw new Error('Supabase not configured');
-
-    const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-            emailRedirectTo: `${window.location.origin}/verify-email`,
-        }
+    const response = await fetch(`${apiBaseUrl}/auth/signup`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password })
     });
 
-    if (error) throw error;
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error?.message || data.message || 'Failed to create account');
+    }
+
     return data;
 };
 
 export const signInWithEmail = async (email, password) => {
-    if (!supabase) throw new Error('Supabase not configured');
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+    const response = await fetch(`${apiBaseUrl}/auth/login`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password })
     });
 
-    if (error) throw error;
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error?.message || data.message || 'Invalid email or password');
+    }
+
+    return data;
+};
+
+export const verify2FACode = async (email, code) => {
+    const response = await fetch(`${apiBaseUrl}/auth/verify-2fa`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, code })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error?.message || data.message || 'Invalid verification code');
+    }
+
+    return data;
+};
+
+export const resend2FACode = async (email) => {
+    const response = await fetch(`${apiBaseUrl}/auth/resend-2fa`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.error?.message || data.message || 'Failed to resend code');
+    }
+
     return data;
 };
 

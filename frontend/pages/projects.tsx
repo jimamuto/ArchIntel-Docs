@@ -36,6 +36,7 @@ import { useToast } from '../lib/toast';
 import { cn } from '../lib/utils';
 import { authenticatedFetch, getSession } from '../lib/auth_utils';
 import Head from 'next/head';
+import { Modal } from '../components/Modal';
 
 // --- Background Component ---
 const BlueprintBackground = () => (
@@ -91,18 +92,19 @@ export default function DashboardPage() {
       });
 
       if (res.ok) {
-        showToast(`Synchronization initialized for ${project.name}.`);
-        // Refresh project list after a short delay to see status changes
+        showToast(`Sync started for ${project.name}. This may take a few moments.`, 'Syncing...');
         setTimeout(async () => {
           const refresh = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
           const refreshData = await refresh.json();
           setProjects(refreshData.projects || []);
         }, 1000);
       } else {
-        showError("Sync failed.");
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.detail || errorData.message || 'Unable to sync project. Please check your repository access and try again.';
+        showError("Sync failed", errorMsg);
       }
     } catch (err) {
-      showError("Connection lost.");
+      showError("Connection failed", "Unable to connect to the server. Please check your internet connection and try again.");
     } finally {
       setSyncingIds(prev => {
         const next = new Set(prev);
@@ -123,21 +125,23 @@ export default function DashboardPage() {
   async function handleDeleteExecute() {
     if (!projectToDelete) return;
 
-    setLoading(prev => ({ ...prev, syncing: true })); // Reuse syncing for deletion state if needed
+    setLoading(prev => ({ ...prev, syncing: true }));
     try {
       const res = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${projectToDelete.id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
         setProjects(projects.filter(p => p.id !== projectToDelete.id));
-        showToast("Node terminated.");
+        showToast("Project deleted successfully", `${projectToDelete.name} has been removed from your workspace.`);
         setShowDeleteConfirm(false);
         setProjectToDelete(null);
       } else {
-        showError("Termination failed.");
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.detail || errorData.message || 'Unable to delete project. Please try again.';
+        showError("Deletion failed", errorMsg);
       }
     } catch (err) {
-      showError("Connection lost.");
+      showError("Connection failed", "Unable to connect to the server. Please check your internet connection and try again.");
     } finally {
       setLoading(prev => ({ ...prev, syncing: false }));
     }
@@ -255,22 +259,24 @@ export default function DashboardPage() {
           github_token: githubToken || undefined
         })
       });
-      if (!res.ok) throw new Error('Failed to create');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMsg = errorData.detail || errorData.message || 'Unable to create project. Please verify the repository URL and try again.';
+        throw new Error(errorMsg);
+      }
       const data = await res.json();
 
-      // Background clone
       authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects/${data.project.id}/clone`, { method: 'POST' }).catch(() => { });
 
-      showToast('Project created successfully');
+      showToast('Project created', `${name} is being cloned and analyzed. This may take a few minutes.`);
       setShowCreateForm(false);
       setName(''); setRepoUrl(''); setGithubToken('');
 
-      // Refresh
       const refresh = await authenticatedFetch(`${process.env.NEXT_PUBLIC_API_BASE_URL}/projects`);
       const refreshData = await refresh.json();
       setProjects(refreshData.projects || []);
     } catch (err) {
-      showError('Failed to create project');
+      showError('Failed to create project', err.message || 'Please verify your repository URL and GitHub access permissions.');
     } finally {
       setLoading(prev => ({ ...prev, submission: false }));
     }
@@ -297,8 +303,18 @@ export default function DashboardPage() {
                 placeholder="Search resources..."
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                className="w-64 bg-[#15171B] border border-white/[0.08] rounded-full pl-9 pr-4 py-1.5 text-xs text-gray-300 focus:outline-none focus:border-aurora-purple/50 transition-all"
+                className="w-64 bg-[#15171B] border border-white/[0.08] rounded-full pl-9 pr-10 py-1.5 text-xs text-accessible-muted focus:outline-none focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 transition-all"
+                aria-label="Search projects and resources"
               />
+              {filter && (
+                <button
+                  onClick={() => setFilter('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+                  aria-label="Clear search"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -322,9 +338,9 @@ export default function DashboardPage() {
               Architectural Registry
             </div>
             <h1 className="text-4xl font-bold text-white tracking-tight">System Index</h1>
-            <p className="text-gray-500 max-w-lg">
-              Manage your system knowledge graphs and structural analysis projects from a centralized intelligence hub.
-            </p>
+                <p className="text-accessible-subtle max-w-lg">
+                  Manage your system knowledge graphs and structural analysis projects from a centralized intelligence hub.
+                </p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -363,7 +379,7 @@ export default function DashboardPage() {
                       <p className="text-sm text-gray-400">Structural Intelligence Platform</p>
                     </div>
                   </div>
-                  <p className="text-gray-300 leading-relaxed max-w-2xl">
+                  <p className="text-accessible-muted leading-relaxed max-w-2xl">
                     Transform your codebase into actionable intelligence. Start by registering a repository to unlock AST-powered documentation, dependency graphs, and AI-driven architectural insights.
                   </p>
                 </div>
@@ -378,7 +394,7 @@ export default function DashboardPage() {
                     </div>
                     <h3 className="font-bold text-white">Register Repository</h3>
                   </div>
-                  <p className="text-sm text-gray-400 leading-relaxed mb-4">
+                  <p className="text-sm text-accessible-subtle leading-relaxed mb-4">
                     Click <span className="text-aurora-purple font-semibold">"New Repository"</span> above to add a GitHub URL. We'll clone and analyze the structure.
                   </p>
                   <Button
@@ -394,11 +410,11 @@ export default function DashboardPage() {
                     <div className="w-8 h-8 rounded-lg bg-gray-700/20 border border-gray-700/30 flex items-center justify-center text-gray-500 font-bold text-sm">
                       2
                     </div>
-                    <h3 className="font-bold text-gray-400">Explore Intelligence</h3>
-                  </div>
-                  <p className="text-sm text-gray-500 leading-relaxed">
-                    Once analyzed, click <span className="font-semibold">"Explorer"</span> to view documentation, dependency graphs, and architectural insights.
-                  </p>
+                  <h3 className="font-bold text-accessible-subtle">Explore Intelligence</h3>
+                </div>
+                <p className="text-sm text-accessible-subtle leading-relaxed">
+                  Once analyzed, click <span className="font-semibold">"Explorer"</span> to view documentation, dependency graphs, and architectural insights.
+                </p>
                 </div>
 
                 <div className="p-6 rounded-2xl bg-[#0A0C10] border border-white/[0.08] opacity-60">
@@ -406,11 +422,11 @@ export default function DashboardPage() {
                     <div className="w-8 h-8 rounded-lg bg-gray-700/20 border border-gray-700/30 flex items-center justify-center text-gray-500 font-bold text-sm">
                       3
                     </div>
-                    <h3 className="font-bold text-gray-400">Query Architecture</h3>
-                  </div>
-                  <p className="text-sm text-gray-500 leading-relaxed">
-                    Press <span className="font-mono font-semibold">Cmd+K</span> in Explorer to ask questions like "Where is authentication?" or "List all APIs".
-                  </p>
+                  <h3 className="font-bold text-accessible-subtle">Query Architecture</h3>
+                </div>
+                <p className="text-sm text-accessible-subtle leading-relaxed">
+                  Press <span className="font-mono font-semibold">Cmd+K</span> in Explorer to ask questions like "Where is authentication?" or "List all APIs".
+                </p>
                 </div>
               </div>
             </div>
@@ -446,21 +462,21 @@ export default function DashboardPage() {
                     </div>
 
                     <div>
-                      <h3 className="text-lg font-bold text-white group-hover:text-aurora-cyan transition-colors truncate">
+                  <h3 className="text-lg font-bold text-white group-hover:text-aurora-cyan transition-colors truncate">
                         {project.name}
                       </h3>
-                      <p className="text-xs text-gray-500 font-mono mt-1 opacity-60 truncate">
+                      <p className="text-xs text-accessible-subtle font-mono mt-1 opacity-60 truncate">
                         {project.repo_url.replace('https://github.com/', '')}
                       </p>
                     </div>
 
                     <div className="pt-4 flex items-center justify-between border-t border-white/[0.03]">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] uppercase text-gray-600 font-bold tracking-tight">Last Analysis</span>
-                        <span className="text-xs text-gray-400 font-mono">
-                          {project.last_analyzed ? new Date(project.last_analyzed).toLocaleDateString() : 'Pending'}
-                        </span>
-                      </div>
+            <div className="flex flex-col">
+                <span className="text-[10px] uppercase text-gray-600 font-bold tracking-tight">Last Analysis</span>
+                <span className="text-xs text-accessible-subtle font-mono">
+                  {project.last_analyzed ? new Date(project.last_analyzed).toLocaleDateString() : 'Pending'}
+                </span>
+              </div>
                       <div className="flex items-center gap-1 relative z-20">
                         <Button
                           variant="ghost"
@@ -524,247 +540,218 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* Form Modal (Aurora Dialog Style) */}
-      {showCreateForm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="w-full max-w-lg bg-[#0A0C10] border border-aurora-border rounded-2xl shadow-2xl p-8 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-aurora-purple via-aurora-cyan to-aurora-pink" />
+      {/* Create Project Modal */}
+      <Modal
+        isOpen={showCreateForm}
+        onClose={() => setShowCreateForm(false)}
+        title="Register Node"
+        size="lg"
+      >
+        <p className="text-sm text-accessible-subtle mb-6">Inject a repository into the ArchIntel structural engine.</p>
 
-            <button
-              onClick={() => setShowCreateForm(false)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
-            >
-              <Plus className="w-6 h-6 rotate-45" />
-            </button>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-accessible-subtle font-mono" htmlFor="project-name">Project Identifier</label>
+              <input
+                id="project-name"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] px-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 text-white placeholder:text-gray-700"
+                placeholder="e.g. CORE-SYSTEM-V2"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-accessible-subtle font-mono" htmlFor="repo-url">Repository Source (GIT)</label>
+              <div className="relative">
+                <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
 
-            <div className="space-y-2 mb-8">
-              <h2 className="text-2xl font-bold text-white tracking-tight">Register Node</h2>
-              <p className="text-sm text-gray-500">Inject a repository into the ArchIntel structural engine.</p>
+                {githubToken && userRepos.length > 0 ? (
+                  <select
+                    id="repo-url"
+                    required
+                    value={repoUrl}
+                    onChange={(e) => {
+                      setRepoUrl(e.target.value);
+                      if (!name) {
+                        const repo = userRepos.find(r => r.html_url === e.target.value || r.clone_url === e.target.value);
+                        if (repo) setName(repo.name.toUpperCase());
+                      }
+                    }}
+                    className="flex h-12 w-full appearance-none rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 text-white placeholder:text-gray-700"
+                  >
+                    <option value="">Select a repository...</option>
+                    {userRepos.map(repo => (
+                      <option key={repo.id} value={repo.clone_url}>
+                        {repo.full_name} ({repo.private ? 'Private' : 'Public'})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id="repo-url"
+                    required
+                    type="url"
+                    value={repoUrl}
+                    onChange={(e) => setRepoUrl(e.target.value)}
+                    className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-2 focus:ring-aurora-purple/50 text-white placeholder:text-gray-700"
+                    placeholder="https://github.com/organization/repo"
+                  />
+                )}
+              </div>
+              {githubToken && loadingRepos && <p className="text-[10px] text-accessible-subtle pl-1" role="status" aria-live="polite">Loading repositories...</p>}
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-4">
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">Project Identifier</label>
-                  <input
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] px-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
-                    placeholder="e.g. CORE-SYSTEM-V2"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">Repository Source (GIT)</label>
-                  <div className="relative">
-                    <Github className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600" />
+            <div className="grid gap-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-accessible-subtle font-mono">
+                GitHub Access
+              </label>
 
-                    {githubToken && userRepos.length > 0 ? (
-                      <select
-                        required
-                        value={repoUrl}
-                        onChange={(e) => {
-                          setRepoUrl(e.target.value);
-                          // Auto-fill name if empty
-                          if (!name) {
-                            const repo = userRepos.find(r => r.html_url === e.target.value || r.clone_url === e.target.value);
-                            if (repo) setName(repo.name.toUpperCase());
-                          }
-                        }}
-                        className="flex h-12 w-full appearance-none rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
-                      >
-                        <option value="">Select a repository...</option>
-                        {userRepos.map(repo => (
-                          <option key={repo.id} value={repo.clone_url}>
-                            {repo.full_name} ({repo.private ? 'Private' : 'Public'})
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        required
-                        type="url"
-                        value={repoUrl}
-                        onChange={(e) => setRepoUrl(e.target.value)}
-                        className="flex h-12 w-full rounded-xl border border-white/[0.08] bg-[#15171B] pl-12 pr-4 text-sm transition-all focus:border-aurora-purple/50 focus:ring-1 focus:ring-aurora-purple/20 text-white placeholder:text-gray-700"
-                        placeholder="https://github.com/organization/repo"
-                      />
-                    )}
+              {githubToken ? (
+                <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                    <span className="text-sm text-green-400 font-bold">GitHub Connected</span>
                   </div>
-                  {githubToken && loadingRepos && <p className="text-[10px] text-gray-500 pl-1">Loading repositories...</p>}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setGithubToken('')}
+                    className="text-gray-500 hover:text-white h-6 px-2"
+                  >
+                    Disconnect
+                  </Button>
                 </div>
-
-                <div className="grid gap-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500 font-mono">
-                    GitHub Access
-                  </label>
-
-                  {githubToken ? (
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-green-500/10 border border-green-500/20">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        <span className="text-sm text-green-400 font-bold">GitHub Connected</span>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setGithubToken('')}
-                        className="text-gray-500 hover:text-white h-6 px-2"
-                      >
-                        Disconnect
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          const width = 600;
-                          const height = 700;
-                          const left = (window.screen.width - width) / 2;
-                          const top = (window.screen.height - height) / 2;
-                          window.open(
-                            `${process.env.NEXT_PUBLIC_API_BASE_URL}/auth/github/login`,
-                            'github_oauth',
-                            `width=${width},height=${height},top=${top},left=${left}`
-                          );
-                        }}
-                        className="w-full bg-[#24292F] hover:bg-[#24292F]/80 text-white border border-white/10 rounded-xl flex items-center justify-center gap-2"
-                      >
-                        <Github className="w-4 h-4" />
-                        Connect GitHub Account
-                      </Button>
-                      <p className="text-[10px] text-gray-500 text-center">
-                        Required for private repositories. Grants read-only access.
-                      </p>
-                    </div>
-                  )}
+              ) : (
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const width = 600;
+                      const height = 700;
+                      const left = (window.screen.width - width) / 2;
+                      const top = (window.screen.height - height) / 2;
+                      window.open(
+                        `${process.env.NEXT_PUBLIC_API_BASE_URL}/auth/github/login`,
+                        'github_oauth',
+                        `width=${width},height=${height},top=${top},left=${left}`
+                      );
+                    }}
+                    className="w-full bg-[#24292F] hover:bg-[#24292F]/80 text-white border border-white/10 rounded-xl flex items-center justify-center gap-2"
+                  >
+                    <Github className="w-4 h-4" />
+                    Connect GitHub Account
+                  </Button>
+                  <p className="text-[10px] text-accessible-subtle text-center">
+                    Required for private repositories. Grants read-only access.
+                  </p>
                 </div>
-              </div>
-
-              <div className="flex flex-col gap-3 pt-4">
-                <Button type="submit" disabled={loading.submission} className="h-12 bg-aurora-purple hover:bg-aurora-purple/80 text-white font-bold rounded-xl shadow-glow">
-                  {loading.submission ? (
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  ) : (
-                    <Zap className="mr-2 h-4 w-4 fill-current" />
-                  )}
-                  Initialize Core Analysis
-                </Button>
-                <div className="flex items-center justify-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
-                  <AlertCircle className="w-3 h-3 text-aurora-cyan" />
-                  Stateless secure analysis active
-                </div>
-              </div>
-            </form>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+
+          <div className="flex flex-col gap-3 pt-4">
+            <Button type="submit" disabled={loading.submission} className="h-12 bg-aurora-purple hover:bg-aurora-purple/80 text-white font-bold rounded-xl shadow-glow">
+              {loading.submission ? (
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              ) : (
+                <Zap className="mr-2 h-4 w-4 fill-current" />
+              )}
+              Initialize Core Analysis
+            </Button>
+            <div className="flex items-center justify-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
+              <AlertCircle className="w-3 h-3 text-aurora-cyan" />
+              Stateless secure analysis active
+            </div>
+          </div>
+        </form>
+      </Modal>
 
       {/* CLI Access Modal */}
-      {showCLIModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowCLIModal(false)} />
-          <div className="relative w-full max-w-lg bg-[#0A0C10] border border-white/[0.1] rounded-2xl shadow-2xl p-8">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-aurora-purple/10 border border-aurora-purple/20">
-                  <Terminal className="w-5 h-5 text-aurora-purple" />
-                </div>
-                <h3 className="text-xl font-bold text-white">CLI Configuration</h3>
-              </div>
-              <button onClick={() => setShowCLIModal(false)} className="text-gray-500 hover:text-white transition-colors">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Base Command</span>
-                <div className="p-4 rounded-xl bg-black border border-white/[0.05] font-mono text-sm text-aurora-cyan">
-                  python backend/cli.py --help
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Global Operations</span>
-                {[
-                  { cmd: 'list', desc: 'List all architectural nodes' },
-                  { cmd: 'analyze <url>', desc: 'Initialize node analysis' },
-                  { cmd: 'query <id> <text>', desc: 'Interactive arch intelligence' }
-                ].map(item => (
-                  <div key={item.cmd} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/[0.05]">
-                    <code className="text-xs text-aurora-purple">cli.py {item.cmd}</code>
-                    <span className="text-[10px] text-gray-500 font-mono">{item.desc}</span>
-                  </div>
-                ))}
-              </div>
-
-              <p className="text-[10px] text-gray-600 italic">
-                Ensure the backend server is running at http://localhost:8000 before executing CLI commands.
-              </p>
+      <Modal
+        isOpen={showCLIModal}
+        onClose={() => setShowCLIModal(false)}
+        title="CLI Configuration"
+        size="lg"
+      >
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <span className="text-[10px] font-bold text-accessible-subtle uppercase tracking-widest">Base Command</span>
+            <div className="p-4 rounded-xl bg-black border border-white/[0.05] font-mono text-sm text-aurora-cyan">
+              python backend/cli.py --help
             </div>
           </div>
+
+          <div className="space-y-4">
+            <span className="text-[10px] font-bold text-accessible-subtle uppercase tracking-widest">Global Operations</span>
+            {[
+              { cmd: 'list', desc: 'List all architectural nodes' },
+              { cmd: 'analyze <url>', desc: 'Initialize node analysis' },
+              { cmd: 'query <id> <text>', desc: 'Interactive arch intelligence' }
+            ].map(item => (
+              <div key={item.cmd} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+                <code className="text-xs text-aurora-purple">cli.py {item.cmd}</code>
+                <span className="text-[10px] text-accessible-subtle font-mono">{item.desc}</span>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[10px] text-accessible-subtle italic">
+            Ensure that the backend server is running at http://localhost:8000 before executing CLI commands.
+          </p>
         </div>
-      )}
+      </Modal>
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && projectToDelete && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/90 backdrop-blur-md animate-in fade-in duration-300"
-            onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="relative w-full max-w-md bg-[#0A0C10] border border-red-500/20 rounded-[24px] shadow-2xl p-8 overflow-hidden"
-          >
-            {/* Red alert top border */}
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 via-orange-500 to-red-500" />
+      <Modal
+        isOpen={showDeleteConfirm}
+        onClose={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
+        size="md"
+        className="border-red-500/20"
+      >
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 via-orange-500 to-red-500" />
 
-            <div className="flex flex-col items-center text-center space-y-6">
-              <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-                <AlertCircle className="w-8 h-8 text-red-500" />
-              </div>
+        <div className="flex flex-col items-center text-center space-y-6">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <AlertCircle className="w-8 h-8 text-red-500" />
+          </div>
 
-              <div className="space-y-2">
-                <h3 className="text-2xl font-bold text-white tracking-tight">Terminate Node?</h3>
-                <p className="text-sm text-gray-400 leading-relaxed px-4">
-                  Are you sure you want to delete <span className="text-white font-bold">{projectToDelete.name}</span>?
-                  This action will permanently remove all analyzed structural data and documentation.
-                </p>
-              </div>
+          <div className="space-y-2">
+            <h3 className="text-2xl font-bold text-white tracking-tight">Terminate Node?</h3>
+            <p className="text-sm text-accessible-subtle leading-relaxed">
+              Are you sure you want to delete <span className="text-white font-bold">{projectToDelete?.name}</span>?
+              This action will permanently remove all analyzed structural data and documentation.
+            </p>
+          </div>
 
-              <div className="grid grid-cols-2 gap-3 w-full pt-4">
-                <Button
-                  variant="outline"
-                  onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
-                  className="h-12 border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05] text-gray-400 rounded-xl font-bold"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleDeleteExecute}
-                  disabled={loading.syncing}
-                  className="h-12 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-lg shadow-red-900/20"
-                >
-                  {loading.syncing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    "Terminate"
-                  )}
-                </Button>
-              </div>
+          <div className="grid grid-cols-2 gap-3 w-full pt-4">
+            <Button
+              variant="outline"
+              onClick={() => { setShowDeleteConfirm(false); setProjectToDelete(null); }}
+              className="h-12 border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.05] text-gray-400 rounded-xl font-bold"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteExecute}
+              disabled={loading.syncing}
+              className="h-12 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-lg shadow-red-900/20"
+            >
+              {loading.syncing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Terminate"
+              )}
+            </Button>
+          </div>
 
-              <div className="flex items-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
-                <Shield className="w-3 h-3" />
-                Permanent removal protocol
-              </div>
-            </div>
-          </motion.div>
+          <div className="flex items-center gap-2 text-[10px] text-gray-600 font-mono uppercase tracking-widest">
+            <Shield className="w-3 h-3" />
+            Permanent removal protocol
+          </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

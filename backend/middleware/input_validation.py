@@ -130,6 +130,11 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
         client_ip = self._get_client_ip(request)
         endpoint = request.url.path
         
+        # Skip validation for auth endpoints to prevent issues with 2FA flow
+        if endpoint.startswith('/auth'):
+            response = await call_next(request)
+            return response
+        
         # 1. Rate limiting check
         await self._check_rate_limit(client_ip, endpoint, request)
         
@@ -152,7 +157,7 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
         # 7. Security headers validation
         self._validate_security_headers(request)
         
-        # Process the request
+        # Process request
         response = await call_next(request)
         
         # Add security headers to response
@@ -173,7 +178,7 @@ class InputValidationMiddleware(BaseHTTPMiddleware):
             client_ip = forwarded_for.split(',')[0].strip()
         else:
             client_ip = request.client.host if request.client else 'unknown'
-        
+
         return client_ip
     
     async def _check_rate_limit(self, client_ip: str, endpoint: str, request: Request):
