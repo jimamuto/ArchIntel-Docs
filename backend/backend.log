@@ -8,3 +8,21 @@ INFO:     Started server process [24072]
 INFO:     Waiting for application startup.
 2025-12-25 14:45:31,559 - SECURITY - INFO - AUTH_SUCCESS - IP: SYSTEM, User: SYSTEM, Endpoint: startup, Error: Backend started successfully
 INFO:     Application startup complete.
+Security configuration initialized successfully
+Environment: development
+Debug Mode: False
+Session Timeout: 1800 seconds
+Rate Limit: 5 attempts per 60 seconds
+Input validation middleware added
+CSP violation reporting endpoint added: POST /api/v1/csp-report
+CSP status endpoint added: GET /api/v1/csp-status
+Connected to Redis for background tasks at redis://localhost:6379 (source: default)
+INFO:     127.0.0.1:49671 - "OPTIONS /auth/signup HTTP/1.1" 200 OK
+2025-12-25 14:48:09,409 - EMAIL - INFO - Email sent successfully to jim.amuto@strathmore.edu
+2025-12-25 14:48:09,409 - EMAIL - INFO - 2FA code sent to jim.amuto@strathmore.edu
+INFO:     127.0.0.1:49671 - "POST /auth/signup HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50477 - "OPTIONS /auth/verify-2fa HTTP/1.1" 200 OK
+No pending 2FA session for email: jim.amuto@strathmore.edu
+2025-12-25 14:48:22,456 - SECURITY - INFO - AUTH_FAILURE - IP: 127.0.0.1, User: jim.amuto@strathmore.edu, Endpoint: /auth/verify-2fa, Error: No pending 2FA session
+ERROR_ID: 9154a8ab-c480-4d34-8386-2494462c69b7 | Category: SYSTEM | Severity: MEDIUM | Code: INVALID_INPUT | Message: No pending authentication session. Please login again. | IP: 127.0.0.1 | User: ANON | Path: /auth/verify-2fa | Method: POST | Context: HTTP_ENDPOINT
+INFO:     127.0.0.1:50477 - "POST /auth/verify-2fa HTTP/1.1" 400 Bad Request

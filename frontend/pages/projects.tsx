@@ -276,7 +276,8 @@ export default function DashboardPage() {
       const refreshData = await refresh.json();
       setProjects(refreshData.projects || []);
     } catch (err) {
-      showError('Failed to create project', err.message || 'Please verify your repository URL and GitHub access permissions.');
+      const errorMessage = err instanceof Error ? err.message : 'Please verify your repository URL and GitHub access permissions.';
+      showError('Failed to create project', errorMessage);
     } finally {
       setLoading(prev => ({ ...prev, submission: false }));
     }
